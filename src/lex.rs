@@ -11,6 +11,12 @@ enum TokenType {
     // Operators
     ASSIGN,
     PLUS,
+    MINUS,
+    BANG,
+    ASTERISK,
+    SLASH,
+    LT,
+    GT,
     // Delimiters
     COMMA,
     SEMICOLON,
@@ -30,10 +36,10 @@ struct Token {
 }
 
 impl Token {
-    fn from_pair(token_type: TokenType, lit: String) -> Token {
-        Token {
+    fn with_str(token_type: TokenType, lit: &str) -> Token {
+        Token { 
             token_type,
-            literal: Some(lit),
+            literal: Some(String::from(lit))
         }
     }
 }
@@ -44,12 +50,6 @@ struct Lexer<'a> {
 
 impl<'a> Lexer<'a> {
     fn for_str(input: &str) -> Lexer {
-        Lexer {
-            input_iter: input.chars().peekable(),
-        }
-    }
-
-    fn for_string(input: &'a String) -> Lexer<'a> {
         Lexer {
             input_iter: input.chars().peekable(),
         }
@@ -74,6 +74,30 @@ impl<'a> Lexer<'a> {
                     }),
                     '+' => Ok(Token {
                         token_type: TokenType::PLUS,
+                        literal,
+                    }),
+                    '-' => Ok(Token {
+                        token_type: TokenType::MINUS,
+                        literal,
+                    }),
+                    '!' => Ok(Token {
+                        token_type: TokenType::BANG,
+                        literal,
+                    }),
+                    '*' => Ok(Token {
+                        token_type: TokenType::ASTERISK,
+                        literal,
+                    }),
+                    '/' => Ok(Token {
+                        token_type: TokenType::SLASH,
+                        literal,
+                    }),
+                    '<' => Ok(Token {
+                        token_type: TokenType::LT,
+                        literal,
+                    }),
+                    '>' => Ok(Token {
+                        token_type: TokenType::GT,
                         literal,
                     }),
                     '(' => Ok(Token {
@@ -181,20 +205,21 @@ impl<'a> Lexer<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::TokenType::*;
 
     #[test]
     fn test_next_token() {
         let mut lexer = Lexer::for_str("=+(){},;");
 
         let expected_tokens = [
-            Token::from_pair(TokenType::ASSIGN, String::from("=")),
-            Token::from_pair(TokenType::PLUS, String::from("+")),
-            Token::from_pair(TokenType::LPAREN, String::from("(")),
-            Token::from_pair(TokenType::RPAREN, String::from(")")),
-            Token::from_pair(TokenType::LBRACE, String::from("{")),
-            Token::from_pair(TokenType::RBRACE, String::from("}")),
-            Token::from_pair(TokenType::COMMA, String::from(",")),
-            Token::from_pair(TokenType::SEMICOLON, String::from(";")),
+            Token::with_str(ASSIGN, "="),
+            Token::with_str(PLUS, "+"),
+            Token::with_str(LPAREN, "("),
+            Token::with_str(RPAREN, ")"),
+            Token::with_str(LBRACE, "{"),
+            Token::with_str(RBRACE, "}"),
+            Token::with_str(COMMA, ","),
+            Token::with_str(SEMICOLON, ";"),
         ];
 
         for token in expected_tokens.iter() {
@@ -219,44 +244,123 @@ mod tests {
         ";
         let mut lexer = Lexer::for_str(input);
         let expected_tokens = [
-            Token::from_pair(TokenType::LET, String::from("let")),
-            Token::from_pair(TokenType::IDENT, String::from("five")),
-            Token::from_pair(TokenType::ASSIGN, String::from("=")),
-            Token::from_pair(TokenType::INT, String::from("5")),
-            Token::from_pair(TokenType::SEMICOLON, String::from(";")),
-            Token::from_pair(TokenType::LET, String::from("let")),
-            Token::from_pair(TokenType::IDENT, String::from("ten")),
-            Token::from_pair(TokenType::ASSIGN, String::from("=")),
-            Token::from_pair(TokenType::INT, String::from("10")),
-            Token::from_pair(TokenType::SEMICOLON, String::from(";")),
-            Token::from_pair(TokenType::LET, String::from("let")),
-            Token::from_pair(TokenType::IDENT, String::from("add")),
-            Token::from_pair(TokenType::ASSIGN, String::from("=")),
-            Token::from_pair(TokenType::FUNCTION, String::from("fn")),
-            Token::from_pair(TokenType::LPAREN, String::from("(")),
-            Token::from_pair(TokenType::IDENT, String::from("x")),
-            Token::from_pair(TokenType::COMMA, String::from(",")),
-            Token::from_pair(TokenType::IDENT, String::from("y")),
-            Token::from_pair(TokenType::RPAREN, String::from(")")),
-            Token::from_pair(TokenType::LBRACE, String::from("{")),
-            Token::from_pair(TokenType::IDENT, String::from("x")),
-            Token::from_pair(TokenType::PLUS, String::from("+")),
-            Token::from_pair(TokenType::IDENT, String::from("y")),
-            Token::from_pair(TokenType::SEMICOLON, String::from(";")),
-            Token::from_pair(TokenType::RBRACE, String::from("}")),
-            Token::from_pair(TokenType::SEMICOLON, String::from(";")),
-            Token::from_pair(TokenType::LET, String::from("let")),
-            Token::from_pair(TokenType::IDENT, String::from("result")),
-            Token::from_pair(TokenType::ASSIGN, String::from("=")),
-            Token::from_pair(TokenType::IDENT, String::from("add")),
-            Token::from_pair(TokenType::LPAREN, String::from("(")),
-            Token::from_pair(TokenType::IDENT, String::from("five")),
-            Token::from_pair(TokenType::COMMA, String::from(",")),
-            Token::from_pair(TokenType::IDENT, String::from("ten")),
-            Token::from_pair(TokenType::RPAREN, String::from(")")),
-            Token::from_pair(TokenType::SEMICOLON, String::from(";")),
+            Token::with_str(LET, "let"),
+            Token::with_str(IDENT, "five"),
+            Token::with_str(ASSIGN, "="),
+            Token::with_str(INT, "5"),
+            Token::with_str(SEMICOLON, ";"),
+            Token::with_str(LET, "let"),
+            Token::with_str(IDENT, "ten"),
+            Token::with_str(ASSIGN, "="),
+            Token::with_str(INT, "10"),
+            Token::with_str(SEMICOLON, ";"),
+            Token::with_str(LET, "let"),
+            Token::with_str(IDENT, "add"),
+            Token::with_str(ASSIGN, "="),
+            Token::with_str(FUNCTION, "fn"),
+            Token::with_str(LPAREN, "("),
+            Token::with_str(IDENT, "x"),
+            Token::with_str(COMMA, ","),
+            Token::with_str(IDENT, "y"),
+            Token::with_str(RPAREN, ")"),
+            Token::with_str(LBRACE, "{"),
+            Token::with_str(IDENT, "x"),
+            Token::with_str(PLUS, "+"),
+            Token::with_str(IDENT, "y"),
+            Token::with_str(SEMICOLON, ";"),
+            Token::with_str(RBRACE, "}"),
+            Token::with_str(SEMICOLON, ";"),
+            Token::with_str(LET, "let"),
+            Token::with_str(IDENT, "result"),
+            Token::with_str(ASSIGN, "="),
+            Token::with_str(IDENT, "add"),
+            Token::with_str(LPAREN, "("),
+            Token::with_str(IDENT, "five"),
+            Token::with_str(COMMA, ","),
+            Token::with_str(IDENT, "ten"),
+            Token::with_str(RPAREN, ")"),
+            Token::with_str(SEMICOLON, ";"),
             Token {
-                token_type: TokenType::EOF,
+                token_type: EOF,
+                literal: None,
+            },
+        ];
+
+        for token in expected_tokens.iter() {
+            let parsed = lexer.next_token().unwrap();
+            assert_eq!(&parsed, token);
+        }
+    }
+
+    #[test]
+    fn test_lex_script_more_tokens() {
+        let input = "let five = 5;
+        
+        let ten = 10;
+
+        
+        let add = fn(x, y) {
+          x + y;
+        };
+
+        let result = add(five, ten);
+
+        !-/*5;
+
+        5 < 10 > 5;
+        ";
+        let mut lexer = Lexer::for_str(input);
+        let expected_tokens = [
+            Token::with_str(LET, "let"),
+            Token::with_str(IDENT, "five"),
+            Token::with_str(ASSIGN, "="),
+            Token::with_str(INT, "5"),
+            Token::with_str(SEMICOLON, ";"),
+            Token::with_str(LET, "let"),
+            Token::with_str(IDENT, "ten"),
+            Token::with_str(ASSIGN, "="),
+            Token::with_str(INT, "10"),
+            Token::with_str(SEMICOLON, ";"),
+            Token::with_str(LET, "let"),
+            Token::with_str(IDENT, "add"),
+            Token::with_str(ASSIGN, "="),
+            Token::with_str(FUNCTION, "fn"),
+            Token::with_str(LPAREN, "("),
+            Token::with_str(IDENT, "x"),
+            Token::with_str(COMMA, ","),
+            Token::with_str(IDENT, "y"),
+            Token::with_str(RPAREN, ")"),
+            Token::with_str(LBRACE, "{"),
+            Token::with_str(IDENT, "x"),
+            Token::with_str(PLUS, "+"),
+            Token::with_str(IDENT, "y"),
+            Token::with_str(SEMICOLON, ";"),
+            Token::with_str(RBRACE, "}"),
+            Token::with_str(SEMICOLON, ";"),
+            Token::with_str(LET, "let"),
+            Token::with_str(IDENT, "result"),
+            Token::with_str(ASSIGN, "="),
+            Token::with_str(IDENT, "add"),
+            Token::with_str(LPAREN, "("),
+            Token::with_str(IDENT, "five"),
+            Token::with_str(COMMA, ","),
+            Token::with_str(IDENT, "ten"),
+            Token::with_str(RPAREN, ")"),
+            Token::with_str(SEMICOLON, ";"),
+            Token::with_str(BANG, "!"),
+            Token::with_str(MINUS, "-"),
+            Token::with_str(SLASH, "/"),
+            Token::with_str(ASTERISK, "*"),
+            Token::with_str(INT, "5"),
+            Token::with_str(SEMICOLON, ";"),
+            Token::with_str(INT, "5"),
+            Token::with_str(LT, "<"),
+            Token::with_str(INT, "10"),
+            Token::with_str(GT, ">"),
+            Token::with_str(INT, "5"),
+            Token::with_str(SEMICOLON, ";"),
+            Token {
+                token_type: EOF,
                 literal: None,
             },
         ];
