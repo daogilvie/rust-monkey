@@ -17,6 +17,8 @@ enum TokenType {
     SLASH,
     LT,
     GT,
+    EQ,
+    NOT_EQ,
     // Delimiters
     COMMA,
     SEMICOLON,
@@ -31,7 +33,7 @@ enum TokenType {
     ELSE,
     RETURN,
     TRUE,
-    FALSE
+    FALSE,
 }
 
 #[derive(Debug, PartialEq)]
@@ -42,9 +44,9 @@ struct Token {
 
 impl Token {
     fn with_str(token_type: TokenType, lit: &str) -> Token {
-        Token { 
+        Token {
             token_type,
-            literal: Some(String::from(lit))
+            literal: Some(String::from(lit)),
         }
     }
 }
@@ -73,10 +75,7 @@ impl<'a> Lexer<'a> {
                 lit.push(ch);
                 let literal = Some(lit);
                 match ch {
-                    '=' => Ok(Token {
-                        token_type: TokenType::ASSIGN,
-                        literal,
-                    }),
+                    '=' => Ok(self.check_multichar_eq(literal)),
                     '+' => Ok(Token {
                         token_type: TokenType::PLUS,
                         literal,
@@ -85,10 +84,7 @@ impl<'a> Lexer<'a> {
                         token_type: TokenType::MINUS,
                         literal,
                     }),
-                    '!' => Ok(Token {
-                        token_type: TokenType::BANG,
-                        literal,
-                    }),
+                    '!' => Ok(self.check_multichar_bang(literal)),
                     '*' => Ok(Token {
                         token_type: TokenType::ASTERISK,
                         literal,
@@ -164,6 +160,46 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    fn check_multichar_eq(&mut self, literal: Option<String>) -> Token {
+        let next_char = self.peek_char();
+        match next_char {
+            Some(c) => match c {
+                '=' => {
+                    self.read_char();
+                    Token::with_str(TokenType::EQ, "==")
+                }
+                _ => Token {
+                    token_type: TokenType::ASSIGN,
+                    literal,
+                },
+            },
+            _ => Token {
+                token_type: TokenType::ASSIGN,
+                literal,
+            },
+        }
+    }
+
+    fn check_multichar_bang(&mut self, literal: Option<String>) -> Token {
+        let next_char = self.peek_char();
+        match next_char {
+            Some(c) => match c {
+                '=' => {
+                    self.read_char();
+                    Token::with_str(TokenType::NOT_EQ, "!=")
+                }
+                _ => Token {
+                    token_type: TokenType::BANG,
+                    literal,
+                },
+            },
+            _ => Token {
+                token_type: TokenType::BANG,
+                literal,
+            },
+        }
+    }
+
     fn read_ident(&mut self, prefix: char) -> Option<String> {
         let mut ident = String::from("");
         ident.push(prefix);
@@ -214,8 +250,8 @@ impl<'a> Lexer<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::TokenType::*;
+    use super::*;
 
     #[test]
     fn test_next_token() {
@@ -326,6 +362,9 @@ mod tests {
         } else {
           return false;
         }
+
+        10 == 10;
+        10 != 9;
         ";
         let mut lexer = Lexer::for_str(input);
         let expected_tokens = [
@@ -394,6 +433,14 @@ mod tests {
             Token::with_str(FALSE, "false"),
             Token::with_str(SEMICOLON, ";"),
             Token::with_str(RBRACE, "}"),
+            Token::with_str(INT, "10"),
+            Token::with_str(EQ, "=="),
+            Token::with_str(INT, "10"),
+            Token::with_str(SEMICOLON, ";"),
+            Token::with_str(INT, "10"),
+            Token::with_str(NOT_EQ, "!="),
+            Token::with_str(INT, "9"),
+            Token::with_str(SEMICOLON, ";"),
             Token {
                 token_type: EOF,
                 literal: None,
