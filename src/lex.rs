@@ -27,6 +27,11 @@ enum TokenType {
     // Keywords
     FUNCTION,
     LET,
+    IF,
+    ELSE,
+    RETURN,
+    TRUE,
+    FALSE
 }
 
 #[derive(Debug, PartialEq)]
@@ -176,6 +181,11 @@ impl<'a> Lexer<'a> {
         match ident.as_str() {
             "let" => TokenType::LET,
             "fn" => TokenType::FUNCTION,
+            "if" => TokenType::IF,
+            "else" => TokenType::ELSE,
+            "return" => TokenType::RETURN,
+            "true" => TokenType::TRUE,
+            "false" => TokenType::FALSE,
             _ => TokenType::IDENT,
         }
     }
@@ -293,7 +303,7 @@ mod tests {
     }
 
     #[test]
-    fn test_lex_script_more_tokens() {
+    fn test_lex_script_extended_set() {
         let input = "let five = 5;
         
         let ten = 10;
@@ -308,6 +318,14 @@ mod tests {
         !-/*5;
 
         5 < 10 > 5;
+
+        if (5 < 10) {
+
+          return true;
+
+        } else {
+          return false;
+        }
         ";
         let mut lexer = Lexer::for_str(input);
         let expected_tokens = [
@@ -359,6 +377,23 @@ mod tests {
             Token::with_str(GT, ">"),
             Token::with_str(INT, "5"),
             Token::with_str(SEMICOLON, ";"),
+            Token::with_str(IF, "if"),
+            Token::with_str(LPAREN, "("),
+            Token::with_str(INT, "5"),
+            Token::with_str(LT, "<"),
+            Token::with_str(INT, "10"),
+            Token::with_str(RPAREN, ")"),
+            Token::with_str(LBRACE, "{"),
+            Token::with_str(RETURN, "return"),
+            Token::with_str(TRUE, "true"),
+            Token::with_str(SEMICOLON, ";"),
+            Token::with_str(RBRACE, "}"),
+            Token::with_str(ELSE, "else"),
+            Token::with_str(LBRACE, "{"),
+            Token::with_str(RETURN, "return"),
+            Token::with_str(FALSE, "false"),
+            Token::with_str(SEMICOLON, ";"),
+            Token::with_str(RBRACE, "}"),
             Token {
                 token_type: EOF,
                 literal: None,
