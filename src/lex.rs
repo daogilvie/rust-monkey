@@ -2,7 +2,7 @@ use std::iter::Peekable;
 use std::str::Chars;
 
 #[derive(Debug, PartialEq, Clone)]
-enum TokenType {
+pub enum TokenType {
     ILLEGAL,
     EOF,
     // Identifiers & literals
@@ -18,7 +18,7 @@ enum TokenType {
     LT,
     GT,
     EQ,
-    NOT_EQ,
+    NOTEQ,
     // Delimiters
     COMMA,
     SEMICOLON,
@@ -37,7 +37,7 @@ enum TokenType {
 }
 
 #[derive(Debug, PartialEq)]
-struct Token {
+pub struct Token {
     token_type: TokenType,
     literal: Option<String>,
 }
@@ -51,14 +51,17 @@ impl Token {
     }
 }
 
-struct Lexer<'a> {
+pub struct Lexer<'a> {
     input_iter: Peekable<Chars<'a>>,
+    completed: bool,
 }
 
 impl<'a> Lexer<'a> {
-    fn for_str(input: &str) -> Lexer {
+
+    pub fn for_str(input: &str) -> Lexer {
         Lexer {
             input_iter: input.chars().peekable(),
+            completed: false,
         }
     }
 
@@ -186,7 +189,7 @@ impl<'a> Lexer<'a> {
             Some(c) => match c {
                 '=' => {
                     self.read_char();
-                    Token::with_str(TokenType::NOT_EQ, "!=")
+                    Token::with_str(TokenType::NOTEQ, "!=")
                 }
                 _ => Token {
                     token_type: TokenType::BANG,
@@ -245,6 +248,26 @@ impl<'a> Lexer<'a> {
 
     fn read_char(&mut self) -> Option<char> {
         self.input_iter.next()
+    }
+}
+
+impl Iterator for Lexer<'_> {
+    type Item = Token;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.completed {
+            None
+        } else {
+            match self.next_token() {
+                Ok(token) => {
+                    if token.token_type == TokenType::EOF {
+                        self.completed = true;
+                    }
+                    Some(token)
+                }
+                Err(err) => panic!("Unexpected error in lexing: {}", err)
+            }
+        }
     }
 }
 
@@ -438,7 +461,7 @@ mod tests {
             Token::with_str(INT, "10"),
             Token::with_str(SEMICOLON, ";"),
             Token::with_str(INT, "10"),
-            Token::with_str(NOT_EQ, "!="),
+            Token::with_str(NOTEQ, "!="),
             Token::with_str(INT, "9"),
             Token::with_str(SEMICOLON, ";"),
             Token {
