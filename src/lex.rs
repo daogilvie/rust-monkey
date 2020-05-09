@@ -1,7 +1,8 @@
+use std::fmt;
 use std::iter::Peekable;
 use std::str::Chars;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum TokenType {
     ILLEGAL,
     EOF,
@@ -36,17 +37,68 @@ pub enum TokenType {
     FALSE,
 }
 
+impl fmt::Display for TokenType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            TokenType::ILLEGAL => f.write_str("ILLEGAL"),
+            TokenType::EOF => f.write_str("EOF"),
+            TokenType::IDENT => f.write_str("IDENT"),
+            TokenType::INT => f.write_str("INT"),
+            TokenType::ASSIGN => f.write_str("ASSIGN"),
+            TokenType::PLUS => f.write_str("PLUS"),
+            TokenType::MINUS => f.write_str("MINUS"),
+            TokenType::BANG => f.write_str("BANG"),
+            TokenType::ASTERISK => f.write_str("ASTERISK"),
+            TokenType::SLASH => f.write_str("SLASH"),
+            TokenType::LT => f.write_str("LT"),
+            TokenType::GT => f.write_str("GT"),
+            TokenType::EQ => f.write_str("EQ"),
+            TokenType::NOTEQ => f.write_str("NOTEQ"),
+            TokenType::COMMA => f.write_str("COMMA"),
+            TokenType::SEMICOLON => f.write_str("SEMICOLON"),
+            TokenType::LPAREN => f.write_str("LPAREN"),
+            TokenType::RPAREN => f.write_str("RPAREN"),
+            TokenType::LBRACE => f.write_str("LBRACE"),
+            TokenType::RBRACE => f.write_str("RBRACE"),
+            TokenType::FUNCTION => f.write_str("FUNCTION"),
+            TokenType::LET => f.write_str("LET"),
+            TokenType::IF => f.write_str("IF"),
+            TokenType::ELSE => f.write_str("ELSE"),
+            TokenType::RETURN => f.write_str("RETURN"),
+            TokenType::TRUE => f.write_str("TRUE"),
+            TokenType::FALSE => f.write_str("FALSE"),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub struct Token {
-    token_type: TokenType,
+    pub token_type: TokenType,
     literal: Option<String>,
 }
 
+impl fmt::Display for Token {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let lit_string = match self.get_literal() {
+            None => "N/A",
+            Some(s) => s,
+        };
+        write!(f, "{}(\"{}\")", self.token_type, lit_string)
+    }
+}
+
 impl Token {
-    fn with_str(token_type: TokenType, lit: &str) -> Token {
+    pub fn with_str(token_type: TokenType, lit: &str) -> Token {
         Token {
             token_type,
             literal: Some(String::from(lit)),
+        }
+    }
+
+    pub fn get_literal(&self) -> Option<&String> {
+        match &self.literal {
+            Some(s) => Some(&s),
+            None => None,
         }
     }
 }
@@ -57,22 +109,32 @@ pub struct Lexer<'a> {
 }
 
 impl<'a> Lexer<'a> {
-
     pub fn for_str(input: &str) -> Lexer {
+        let mut input_iter = input.chars().peekable();
+        let completed = input_iter.peek().is_none();
         Lexer {
-            input_iter: input.chars().peekable(),
-            completed: false,
+            input_iter,
+            completed,
         }
     }
 
-    fn next_token(&mut self) -> Result<Token, &'static str> {
+    pub fn next_token(&mut self) -> Result<Token, &'static str> {
+        if self.completed {
+            return Ok(Token {
+                token_type: TokenType::EOF,
+                literal: None,
+            });
+        }
         self.skip_whitespace();
 
         match self.read_char() {
-            None => Ok(Token {
-                token_type: TokenType::EOF,
-                literal: None,
-            }),
+            None => {
+                self.completed = true;
+                Ok(Token {
+                    token_type: TokenType::EOF,
+                    literal: None,
+                })
+            }
             Some(ch) => {
                 let mut lit = String::with_capacity(1);
                 lit.push(ch);
@@ -265,7 +327,7 @@ impl Iterator for Lexer<'_> {
                     }
                     Some(token)
                 }
-                Err(err) => panic!("Unexpected error in lexing: {}", err)
+                Err(err) => panic!("Unexpected error in lexing: {}", err),
             }
         }
     }
