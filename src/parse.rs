@@ -13,9 +13,13 @@ mod ast {
     }
 
     pub enum StatementNode {
-        LetStatement {
+        Let {
             token: lex::Token,
             name: ExpressionNode,
+            value: ExpressionNode,
+        },
+        Return {
+            token: lex::Token,
             value: ExpressionNode,
         },
     }
@@ -81,6 +85,7 @@ impl<'a> Parser<'a> {
     fn parse_statement(&mut self) -> Result<ast::StatementNode, String> {
         match self.current_token.token_type {
             LET => self.parse_let_statement(),
+            RETURN => self.parse_return_statement(),
             _ => Err(format!(
                 "No known statement starts with {}",
                 &self.current_token
@@ -120,15 +125,28 @@ impl<'a> Parser<'a> {
             ));
         }
         let ident_token = self.advance_tokens();
-        // We would do the value, but instead we will skip for now
+        // TODO: We would do the value, but instead we will skip for now
         while self.current_token.token_type != SEMICOLON {
             self.advance_tokens();
         }
         let name = ast::ExpressionNode::Identifier { token: ident_token };
         let value = ast::ExpressionNode::Stub;
-        Ok(ast::StatementNode::LetStatement {
+        Ok(ast::StatementNode::Let {
             token: original_token,
             name,
+            value,
+        })
+    }
+
+    fn parse_return_statement(&mut self) -> Result<ast::StatementNode, String> {
+        let original_token = self.advance_tokens();
+        // TODO: We would do the value, but instead we will skip for now
+        while self.current_token.token_type != SEMICOLON {
+            self.advance_tokens();
+        }
+        let value = ast::ExpressionNode::Stub;
+        Ok(ast::StatementNode::Return {
+            token: original_token,
             value,
         })
     }
@@ -173,7 +191,7 @@ mod tests {
         let pairs = program.statements.iter().zip(expected_idents);
         for (statement, ident) in pairs {
             match statement {
-                ast::StatementNode::LetStatement {
+                ast::StatementNode::Let {
                     token: _,
                     name,
                     value: _,
@@ -183,6 +201,7 @@ mod tests {
                     }
                     _ => assert!(false, "Encountered an unexpected non-identifier name"),
                 },
+                _ => assert!(false, "Encountered unexpected non-let statement"),
             }
         }
     }
@@ -222,6 +241,40 @@ mod tests {
                 "Error did not match expectation: wanted {}, got {}",
                 expected, actual
             );
+        }
+    }
+
+    #[test]
+    fn test_parse_return_statements() {
+        let input = "return 5;
+
+        return 10;
+
+        return 838383;
+        ";
+        let lexer = lex::Lexer::for_str(input);
+        let mut parser = Parser::for_lexer(lexer);
+        let parsed = parser.parse();
+        assert_ne!(
+            parsed.is_err(),
+            true,
+            "Parser failed with error \"{}\"",
+            parsed.err().unwrap()
+        );
+        let program = parsed.unwrap();
+        let length = program.statements.len();
+        assert_eq!(
+            length, 3,
+            "Expecting program to contain 3 statements, got {}",
+            length
+        );
+        for statement in program.statements {
+            match statement {
+                ast::StatementNode::Return { token, value: _ } => {
+                    assert_eq!(token.get_literal().unwrap(), "return", "Return statement has non-return token");
+                },
+                _ => assert!(false, "Encountered unexpected non-return statement"),
+            }
         }
     }
 }
