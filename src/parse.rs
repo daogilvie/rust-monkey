@@ -7,28 +7,126 @@ use lex::TokenType::*;
 
 mod ast {
     use super::lex;
-    pub enum ExpressionNode {
-        Stub,
-        Identifier { token: lex::Token },
+    use std::fmt;
+
+    pub trait ASTNode {
+        fn get_token_literal(&self) -> Option<&String>;
     }
 
-    pub enum StatementNode {
+    pub enum ExpressionKind {
+        Stub,
+        Identifier,
+    }
+
+    pub struct ExpressionNode {
+        pub token: lex::Token,
+        pub kind: ExpressionKind,
+    }
+
+    impl ExpressionNode {
+        pub fn make_stub() -> ExpressionNode {
+            ExpressionNode {
+                token: lex::Token::with_str(lex::TokenType::ILLEGAL, "<STUB>"),
+                kind: ExpressionKind::Stub,
+            }
+        }
+    }
+
+    impl ASTNode for ExpressionNode {
+        fn get_token_literal(&self) -> Option<&String> {
+            self.token.get_literal()
+        }
+    }
+
+    impl fmt::Display for ExpressionNode {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            match &self.kind {
+                ExpressionKind::Stub => f.write_str("<STUB>"),
+                ExpressionKind::Identifier => write!(f, "{}", self.get_token_literal().unwrap()),
+            }
+        }
+    }
+
+    pub enum StatementKind {
         Let {
-            token: lex::Token,
             name: ExpressionNode,
             value: ExpressionNode,
         },
         Return {
-            token: lex::Token,
             value: ExpressionNode,
         },
+    }
+
+    pub struct StatementNode {
+        pub token: lex::Token,
+        pub kind: StatementKind,
+    }
+
+    impl ASTNode for StatementNode {
+        fn get_token_literal(&self) -> Option<&String> {
+            self.token.get_literal()
+        }
+    }
+
+    impl fmt::Display for StatementNode {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            match &self.kind {
+                StatementKind::Let { name, value } => write!(
+                    f,
+                    "{} {} = {};",
+                    self.get_token_literal().unwrap(),
+                    name,
+                    value
+                ),
+                StatementKind::Return { value } => {
+                    write!(f, "{} {};", self.get_token_literal().unwrap(), value)
+                }
+            }
+        }
     }
 
     /// Root node of all Monkey ASTs
     pub struct Program {
         pub statements: Vec<StatementNode>,
     }
+
+    impl fmt::Display for Program {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            for statement in &self.statements {
+                writeln!(f, "{}", statement)?;
+            }
+            f.write_str("")
+        }
+    }
+
+    #[cfg(test)]
+    mod test {
+        use super::*;
+        #[test]
+        fn test_display_impl() {
+            let prog = Program {
+                statements: vec![StatementNode {
+                    token: lex::Token::with_str(lex::TokenType::LET, "let"),
+                    kind: StatementKind::Let {
+                        name: ExpressionNode {
+                            token: lex::Token::with_str(lex::TokenType::IDENT, "myVar"),
+                            kind: ExpressionKind::Identifier,
+                        },
+                        value: ExpressionNode {
+                            token: lex::Token::with_str(lex::TokenType::IDENT, "anotherVar"),
+                            kind: ExpressionKind::Identifier,
+                        },
+                    },
+                }],
+            };
+
+            let prog_string = format!("{}", prog);
+            assert_eq!(prog_string, "let myVar = anotherVar;\n");
+        }
+    }
 }
+
+use ast::*;
 
 struct Parser<'a> {
     lexer: lex::Lexer<'a>,
@@ -58,8 +156,8 @@ impl<'a> Parser<'a> {
         peek_unwrapped
     }
 
-    pub fn parse(&mut self) -> Result<ast::Program, String> {
-        let mut program = ast::Program {
+    pub fn parse(&mut self) -> Result<Program, String> {
+        let mut program = Program {
             statements: Vec::new(),
         };
         while !self.is_current_token_of_type(EOF) {
@@ -82,7 +180,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_statement(&mut self) -> Result<ast::StatementNode, String> {
+    fn parse_statement(&mut self) -> Result<StatementNode, String> {
         match self.current_token.token_type {
             LET => self.parse_let_statement(),
             RETURN => self.parse_return_statement(),
@@ -104,7 +202,7 @@ impl<'a> Parser<'a> {
         self.current_token.token_type == expected_type
     }
 
-    fn parse_let_statement(&mut self) -> Result<ast::StatementNode, String> {
+    fn parse_let_statement(&mut self) -> Result<StatementNode, String> {
         if !self.is_next_token_of_type(IDENT) {
             return Err(format!(
                 "Expecting assign token after ident, got {}",
@@ -129,25 +227,27 @@ impl<'a> Parser<'a> {
         while self.current_token.token_type != SEMICOLON {
             self.advance_tokens();
         }
-        let name = ast::ExpressionNode::Identifier { token: ident_token };
-        let value = ast::ExpressionNode::Stub;
-        Ok(ast::StatementNode::Let {
+        let name = ExpressionNode {
+            token: ident_token,
+            kind: ExpressionKind::Identifier,
+        };
+        let value = ExpressionNode::make_stub();
+        Ok(StatementNode {
             token: original_token,
-            name,
-            value,
+            kind: StatementKind::Let { name, value },
         })
     }
 
-    fn parse_return_statement(&mut self) -> Result<ast::StatementNode, String> {
+    fn parse_return_statement(&mut self) -> Result<StatementNode, String> {
         let original_token = self.advance_tokens();
         // TODO: We would do the value, but instead we will skip for now
         while self.current_token.token_type != SEMICOLON {
             self.advance_tokens();
         }
-        let value = ast::ExpressionNode::Stub;
-        Ok(ast::StatementNode::Return {
+        let value = ExpressionNode::make_stub();
+        Ok(StatementNode {
             token: original_token,
-            value,
+            kind: StatementKind::Return { value },
         })
     }
 }
@@ -190,14 +290,10 @@ mod tests {
         let expected_idents = vec![("x", "5"), ("y", "10"), ("foobar", "838383")];
         let pairs = program.statements.iter().zip(expected_idents);
         for (statement, ident) in pairs {
-            match statement {
-                ast::StatementNode::Let {
-                    token: _,
-                    name,
-                    value: _,
-                } => match name {
-                    ast::ExpressionNode::Identifier { token } => {
-                        assert_eq!(token.get_literal().unwrap(), ident.0);
+            match &statement.kind {
+                StatementKind::Let { name, value: _ } => match name.kind {
+                    ExpressionKind::Identifier => {
+                        assert_eq!(name.get_token_literal().unwrap(), ident.0);
                     }
                     _ => assert!(false, "Encountered an unexpected non-identifier name"),
                 },
@@ -269,10 +365,14 @@ mod tests {
             length
         );
         for statement in program.statements {
-            match statement {
-                ast::StatementNode::Return { token, value: _ } => {
-                    assert_eq!(token.get_literal().unwrap(), "return", "Return statement has non-return token");
-                },
+            match statement.kind {
+                StatementKind::Return { value: _ } => {
+                    assert_eq!(
+                        statement.get_token_literal().unwrap(),
+                        "return",
+                        "Return statement has non-return token"
+                    );
+                }
                 _ => assert!(false, "Encountered unexpected non-return statement"),
             }
         }
