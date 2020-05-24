@@ -2,7 +2,7 @@ use std::fmt;
 use std::iter::Peekable;
 use std::str::Chars;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TokenType {
     ILLEGAL,
     EOF,
@@ -77,6 +77,18 @@ pub struct Token {
     literal: Option<String>,
 }
 
+impl Clone for Token {
+    fn clone(&self) -> Token {
+        match &self.literal {
+            Some(s) => Token::with_string(self.token_type, String::from(s)),
+            None => Token {
+                token_type: self.token_type,
+                literal: None,
+            },
+        }
+    }
+}
+
 impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let lit_string = match self.get_literal() {
@@ -92,6 +104,13 @@ impl Token {
         Token {
             token_type,
             literal: Some(String::from(lit)),
+        }
+    }
+
+    pub fn with_string(token_type: TokenType, string: String) -> Token {
+        Token {
+            token_type,
+            literal: Some(string)
         }
     }
 
