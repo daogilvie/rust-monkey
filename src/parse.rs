@@ -15,9 +15,16 @@ mod ast {
 
     #[derive(Debug)]
     pub enum ExpressionKind {
-        Stub,
+        BooleanLiteral {
+            value: bool,
+        },
         Identifier {
             name: String,
+        },
+        InfixExpression {
+            left: Box<ExpressionNode>,
+            operator: lex::Token,
+            right: Box<ExpressionNode>,
         },
         IntegerLiteral {
             value: i64,
@@ -26,11 +33,7 @@ mod ast {
             operator: lex::Token,
             right: Box<ExpressionNode>,
         },
-        InfixExpression {
-            left: Box<ExpressionNode>,
-            operator: lex::Token,
-            right: Box<ExpressionNode>,
-        },
+        Stub,
     }
 
     #[derive(Debug)]
@@ -57,12 +60,8 @@ mod ast {
     impl fmt::Display for ExpressionNode {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             match &self.kind {
-                ExpressionKind::Stub => f.write_str("<STUB>"),
+                ExpressionKind::BooleanLiteral { value } => write!(f, "{}", value),
                 ExpressionKind::Identifier { name } => write!(f, "{}", name),
-                ExpressionKind::IntegerLiteral { value } => write!(f, "{}", value),
-                ExpressionKind::PrefixExpression { operator, right } => {
-                    write!(f, "({}{})", operator.get_literal().unwrap(), right)
-                }
                 ExpressionKind::InfixExpression {
                     left,
                     operator,
@@ -74,6 +73,11 @@ mod ast {
                     operator.get_literal().unwrap(),
                     right
                 ),
+                ExpressionKind::IntegerLiteral { value } => write!(f, "{}", value),
+                ExpressionKind::PrefixExpression { operator, right } => {
+                    write!(f, "({}{})", operator.get_literal().unwrap(), right)
+                }
+                ExpressionKind::Stub => f.write_str("<STUB>"),
             }
         }
     }
@@ -304,9 +308,7 @@ impl<'a> Parser<'a> {
         }
         let name = ExpressionNode {
             token: ident_token,
-            kind: ExpressionKind::Identifier {
-                name: ident_name,
-            },
+            kind: ExpressionKind::Identifier { name: ident_name },
         };
         let value = ExpressionNode::make_stub();
         Ok(StatementNode {
@@ -383,6 +385,8 @@ impl<'a> Parser<'a> {
             lex::TokenType::INT => self.parse_integer_literal()?,
             lex::TokenType::BANG => self.parse_prefix_expression()?,
             lex::TokenType::MINUS => self.parse_prefix_expression()?,
+            lex::TokenType::TRUE => self.parse_boolean_literal()?,
+            lex::TokenType::FALSE => self.parse_boolean_literal()?,
             _ => return Ok(None),
         };
         Ok(Some(parse_attempt))
@@ -425,6 +429,25 @@ impl<'a> Parser<'a> {
             }),
             Err(_err) => Err(format!("Cannot parse '{}' to i64", lit)),
         }
+    }
+
+    fn parse_boolean_literal(&mut self) -> Result<ExpressionNode, String> {
+        let token = self.current_token.clone();
+        let value = match &token.token_type {
+            lex::TokenType::TRUE => true,
+            lex::TokenType::FALSE => false,
+            _ => {
+                return Err(format!(
+                    "Expected TRUE/FALSE, got token type {}",
+                    &token.token_type
+                ))
+            }
+        };
+
+        Ok(ExpressionNode {
+            token,
+            kind: ExpressionKind::BooleanLiteral { value },
+        })
     }
 
     fn parse_prefix_expression(&mut self) -> Result<ExpressionNode, String> {
@@ -480,16 +503,29 @@ mod tests {
         }
     }
 
-    fn check_is_int_literal(expression: &ExpressionNode, expected_value: &i64) {
+    fn check_is_int_literal(expression: &ExpressionNode, expected_value: i64) {
         match expression.kind {
             ExpressionKind::IntegerLiteral { value } => {
                 assert_eq!(
-                    &value, expected_value,
+                    value, expected_value,
                     "Expecting value '{}', got '{}'",
                     expected_value, value
                 );
             }
             _ => assert!(false, "Expression is not an IntegerLiteral"),
+        }
+    }
+
+    fn check_is_boolean(expression: &ExpressionNode, expected_value: bool) {
+        match expression.kind {
+            ExpressionKind::BooleanLiteral { value } => {
+                assert_eq!(
+                    value, expected_value,
+                    "Expecting {}, got {}",
+                    expected_value, value
+                );
+            }
+            _ => assert!(false, "Expression is not an BooleanLiteral"),
         }
     }
 
@@ -647,7 +683,7 @@ mod tests {
         let statement = program.statements.get(0).unwrap();
         match &statement.kind {
             StatementKind::Expression { expression } => {
-                check_is_int_literal(expression, &5);
+                check_is_int_literal(expression, 5);
             }
             _ => assert!(false, "Encountered unexpected non-expression statement"),
         }
@@ -656,7 +692,7 @@ mod tests {
     mod test_prefix_funcs {
         use super::*;
         macro_rules! prefix_tests {
-        ($($name:ident: $value:expr,)*) => {
+        ($($name:ident: $value:expr, $checkfn:ident,)*) => {
             $(
                 #[test]
                 fn $name() {
@@ -686,7 +722,7 @@ mod tests {
                                     operator.get_literal().unwrap(),
                                     expected_operator
                                 );
-                                check_is_int_literal(&*right, &expected_value);
+                                $checkfn(&*right, expected_value);
                             }
                             _ => {
                                 assert!(false, "Statement expression is not prefix op expression");
@@ -700,15 +736,17 @@ mod tests {
     }
 
         prefix_tests! {
-            notfive: ("!5", "!", 5),
-            negfifteen: ("-15", "-", 15),
+            notfive: ("!5", "!", 5), check_is_int_literal,
+            negfifteen: ("-15", "-", 15), check_is_int_literal,
+            nottrue: ("!true", "!", true), check_is_boolean,
+            notfalse: ("!false", "!", false), check_is_boolean,
         }
     }
 
     mod test_infix_funcs {
         use super::*;
         macro_rules! infix_tests {
-        ($($name:ident: $value:expr,)*) => {
+        ($($name:ident: $value:expr, $checkfn:ident,)*) => {
             $(
                 #[test]
                 fn $name() {
@@ -738,8 +776,8 @@ mod tests {
                                     operator.get_literal().unwrap(),
                                     expected_operator
                                 );
-                                check_is_int_literal(&*left, &expected_lhs);
-                                check_is_int_literal(&*right, &expected_rhs);
+                                $checkfn(&*left, expected_lhs);
+                                $checkfn(&*right, expected_rhs);
                             }
                             _ => {
                                 assert!(false, "Statement expression is not infix op expression");
@@ -753,14 +791,17 @@ mod tests {
     }
 
         infix_tests! {
-            plus: ("5 + 5;", 5, "+", 5),
-            minus: ("5 - 5;", 5, "-", 5),
-            asterisk: ("5 * 5", 5, "*", 5),
-            slash: ("5 / 5", 5, "/", 5),
-            gt: ("5 > 5", 5, ">", 5),
-            lt: ("5 < 5", 5, "<", 5),
-            eqeq: ("5 == 5", 5, "==", 5),
-            noteq: ("5 != 5", 5, "!=", 5),
+            plus: ("5 + 5;", 5, "+", 5), check_is_int_literal,
+            minus: ("5 - 5;", 5, "-", 5), check_is_int_literal,
+            asterisk: ("5 * 5", 5, "*", 5), check_is_int_literal,
+            slash: ("5 / 5", 5, "/", 5), check_is_int_literal,
+            gt: ("5 > 5", 5, ">", 5), check_is_int_literal,
+            lt: ("5 < 5", 5, "<", 5), check_is_int_literal,
+            eqeq: ("5 == 5", 5, "==", 5), check_is_int_literal,
+            noteq: ("5 != 5", 5, "!=", 5), check_is_int_literal,
+            trueeqtrue: ("true == true", true, "==", true), check_is_boolean,
+            trueneqfalse: ("true != false", true, "!=", false), check_is_boolean,
+            falseeqfalse: ("false == false", false, "==", false), check_is_boolean,
         }
     }
 
@@ -802,6 +843,43 @@ mod tests {
             gteqlt: ("5 > 4 == 3 < 4", "((5 > 4) == (3 < 4))"),
             ltneqgt: ("5 < 4 != 3 > 4", "((5 < 4) != (3 > 4))"),
             mathseq: ("3 + 4 * 5 == 3 * 1 + 4 * 5", "((3 + (4 * 5)) == ((3 * 1) + (4 * 5)))"),
+            falsecompare: ("3 > 5 == false", "((3 > 5) == false)"),
+            truecompare: ("3 < 5 == true", "((3 < 5) == true)"),
+        }
+    }
+
+    #[test]
+    fn test_parse_boolean_expression() {
+        let input = "true; false;";
+        let lexer = lex::Lexer::for_str(input);
+        let mut parser = Parser::for_lexer(lexer);
+        let parsed = parser.parse();
+        assert_ne!(
+            parsed.is_err(),
+            true,
+            "Parser failed with errors \"{:?}\"",
+            parser.errors
+        );
+        let program = parsed.unwrap();
+        let length = program.statements.len();
+        assert_eq!(
+            length, 2,
+            "Expecting program to contain 2 statement, got {}",
+            length
+        );
+        let statement_true = program.statements.get(0).unwrap();
+        match &statement_true.kind {
+            StatementKind::Expression { expression } => {
+                check_is_boolean(expression, true);
+            }
+            _ => assert!(false, "Encountered unexpected non-expression statement"),
+        }
+        let statement_false = program.statements.get(1).unwrap();
+        match &statement_false.kind {
+            StatementKind::Expression { expression } => {
+                check_is_boolean(expression, false);
+            }
+            _ => assert!(false, "Encountered unexpected non-expression statement"),
         }
     }
 }
