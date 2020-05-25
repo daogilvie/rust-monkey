@@ -16,7 +16,9 @@ mod ast {
     #[derive(Debug)]
     pub enum ExpressionKind {
         Stub,
-        Identifier,
+        Identifier {
+            name: String,
+        },
         IntegerLiteral {
             value: i64,
         },
@@ -56,7 +58,7 @@ mod ast {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             match &self.kind {
                 ExpressionKind::Stub => f.write_str("<STUB>"),
-                ExpressionKind::Identifier => write!(f, "{}", self.get_token_literal().unwrap()),
+                ExpressionKind::Identifier { name } => write!(f, "{}", name),
                 ExpressionKind::IntegerLiteral { value } => write!(f, "{}", value),
                 ExpressionKind::PrefixExpression { operator, right } => {
                     write!(f, "({}{})", operator.get_literal().unwrap(), right)
@@ -145,11 +147,15 @@ mod ast {
                     kind: StatementKind::Let {
                         name: ExpressionNode {
                             token: lex::Token::with_str(lex::TokenType::IDENT, "myVar"),
-                            kind: ExpressionKind::Identifier,
+                            kind: ExpressionKind::Identifier {
+                                name: String::from("myVar"),
+                            },
                         },
                         value: ExpressionNode {
                             token: lex::Token::with_str(lex::TokenType::IDENT, "anotherVar"),
-                            kind: ExpressionKind::Identifier,
+                            kind: ExpressionKind::Identifier {
+                                name: String::from("anotherVar"),
+                            },
                         },
                     },
                 }],
@@ -291,13 +297,16 @@ impl<'a> Parser<'a> {
             ));
         }
         let ident_token = self.advance_tokens();
+        let ident_name = ident_token.get_literal().unwrap().clone();
         // TODO: We would do the value, but instead we will skip for now
         while self.current_token.token_type != SEMICOLON {
             self.advance_tokens();
         }
         let name = ExpressionNode {
             token: ident_token,
-            kind: ExpressionKind::Identifier,
+            kind: ExpressionKind::Identifier {
+                name: ident_name,
+            },
         };
         let value = ExpressionNode::make_stub();
         Ok(StatementNode {
@@ -397,9 +406,11 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_identifier(&mut self) -> Result<ExpressionNode, String> {
+        let token = self.current_token.clone();
+        let name = token.get_literal().unwrap().clone();
         Ok(ExpressionNode {
-            token: self.current_token.clone(),
-            kind: ExpressionKind::Identifier,
+            token,
+            kind: ExpressionKind::Identifier { name },
         })
     }
 
@@ -456,6 +467,32 @@ mod tests {
         assert_eq!(parser.peek_token.unwrap().get_literal().unwrap(), "x");
     }
 
+    fn check_is_identifier(expression: &ExpressionNode, expected_name: &str) {
+        match &expression.kind {
+            ExpressionKind::Identifier { name } => {
+                assert_eq!(
+                    name, name,
+                    "Expecting ident '{}', got '{}'",
+                    expected_name, name
+                );
+            }
+            _ => assert!(false, "Expression is not an Identifier"),
+        }
+    }
+
+    fn check_is_int_literal(expression: &ExpressionNode, expected_value: &i64) {
+        match expression.kind {
+            ExpressionKind::IntegerLiteral { value } => {
+                assert_eq!(
+                    &value, expected_value,
+                    "Expecting value '{}', got '{}'",
+                    expected_value, value
+                );
+            }
+            _ => assert!(false, "Expression is not an IntegerLiteral"),
+        }
+    }
+
     #[test]
     fn test_parse_let_statements() {
         let input = "let x = 5;
@@ -484,12 +521,7 @@ mod tests {
         let pairs = program.statements.iter().zip(expected_idents);
         for (statement, ident) in pairs {
             match &statement.kind {
-                StatementKind::Let { name, value: _ } => match name.kind {
-                    ExpressionKind::Identifier => {
-                        assert_eq!(name.get_token_literal().unwrap(), ident.0);
-                    }
-                    _ => assert!(false, "Encountered an unexpected non-identifier name"),
-                },
+                StatementKind::Let { name, value: _ } => check_is_identifier(name, ident.0),
                 _ => assert!(false, "Encountered unexpected non-let statement"),
             }
         }
@@ -586,14 +618,9 @@ mod tests {
         );
         let statement = program.statements.get(0).unwrap();
         match &statement.kind {
-            StatementKind::Expression { expression } => match &expression.kind {
-                ExpressionKind::Identifier => {
-                    assert_eq!(expression.get_token_literal().unwrap(), "foobar");
-                }
-                _ => {
-                    assert!(false, "Statement expression is not identifier");
-                }
-            },
+            StatementKind::Expression { expression } => {
+                check_is_identifier(expression, "foobar");
+            }
             _ => assert!(false, "Encountered unexpected non-expression statement"),
         }
     }
@@ -619,19 +646,9 @@ mod tests {
         );
         let statement = program.statements.get(0).unwrap();
         match &statement.kind {
-            StatementKind::Expression { expression } => match &expression.kind {
-                ExpressionKind::IntegerLiteral { value } => {
-                    assert_eq!(
-                        expression.get_token_literal().unwrap(),
-                        "5",
-                        "expecting literal string '5'"
-                    );
-                    assert_eq!(*value, 5, "Expecting calculated value 5");
-                }
-                _ => {
-                    assert!(false, "Statement expression is not integer literal");
-                }
-            },
+            StatementKind::Expression { expression } => {
+                check_is_int_literal(expression, &5);
+            }
             _ => assert!(false, "Encountered unexpected non-expression statement"),
         }
     }
@@ -669,13 +686,7 @@ mod tests {
                                     operator.get_literal().unwrap(),
                                     expected_operator
                                 );
-                                let deboxed = &*right;
-                                match deboxed.kind {
-                                    ExpressionKind::IntegerLiteral { value } => {
-                                        assert_eq!(value, expected_value)
-                                    },
-                                    _ => assert!(false, "Prefix-op right is not an int literal")
-                                }
+                                check_is_int_literal(&*right, &expected_value);
                             }
                             _ => {
                                 assert!(false, "Statement expression is not prefix op expression");
@@ -727,20 +738,8 @@ mod tests {
                                     operator.get_literal().unwrap(),
                                     expected_operator
                                 );
-                                let deboxed_left = &*left;
-                                match deboxed_left.kind {
-                                    ExpressionKind::IntegerLiteral { value } => {
-                                        assert_eq!(value, expected_lhs)
-                                    },
-                                    _ => assert!(false, "left is not an int literal")
-                                }
-                                let deboxed_right = &*right;
-                                match deboxed_right.kind {
-                                    ExpressionKind::IntegerLiteral { value } => {
-                                        assert_eq!(value, expected_rhs)
-                                    },
-                                    _ => assert!(false, "right is not an int literal")
-                                }
+                                check_is_int_literal(&*left, &expected_lhs);
+                                check_is_int_literal(&*right, &expected_rhs);
                             }
                             _ => {
                                 assert!(false, "Statement expression is not infix op expression");
