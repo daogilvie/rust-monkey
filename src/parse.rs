@@ -412,7 +412,7 @@ impl<'a> Parser<'a> {
                 token,
                 kind: ExpressionKind::IntegerLiteral { value },
             }),
-            Err(err) => Err(format!("Cannot parse '{}' to i64", lit)),
+            Err(_err) => Err(format!("Cannot parse '{}' to i64", lit)),
         }
     }
 
