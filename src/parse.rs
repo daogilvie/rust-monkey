@@ -387,6 +387,7 @@ impl<'a> Parser<'a> {
             lex::TokenType::MINUS => self.parse_prefix_expression()?,
             lex::TokenType::TRUE => self.parse_boolean_literal()?,
             lex::TokenType::FALSE => self.parse_boolean_literal()?,
+            lex::TokenType::LPAREN => self.parse_grouped_expression()?,
             _ => return Ok(None),
         };
         Ok(Some(parse_attempt))
@@ -448,6 +449,22 @@ impl<'a> Parser<'a> {
             token,
             kind: ExpressionKind::BooleanLiteral { value },
         })
+    }
+
+    fn parse_grouped_expression(&mut self) -> Result<ExpressionNode, String> {
+        let token = self.advance_tokens();
+        let expr = self.parse_expression(OperatorPrecedence::LOWEST);
+        if !self.is_next_token_of_type(lex::TokenType::RPAREN) {
+            let s = match &self.peek_token {
+                Some(t) => {t.get_literal().unwrap().as_ref()},
+                None => "EOF",
+            };
+
+            Err(format!("Group parse expecting RPAREN, got {}", s))
+        } else {
+            self.advance_tokens();
+            expr
+        }
     }
 
     fn parse_prefix_expression(&mut self) -> Result<ExpressionNode, String> {
@@ -845,6 +862,11 @@ mod tests {
             mathseq: ("3 + 4 * 5 == 3 * 1 + 4 * 5", "((3 + (4 * 5)) == ((3 * 1) + (4 * 5)))"),
             falsecompare: ("3 > 5 == false", "((3 > 5) == false)"),
             truecompare: ("3 < 5 == true", "((3 < 5) == true)"),
+            parenssimple: ("1 + (2 + 3) + 4", "((1 + (2 + 3)) + 4)"),
+            parenplusmult: ("(5 + 5) * 2", "((5 + 5) * 2)"),
+            parendivplus: ("2 / (5 + 5)", "(2 / (5 + 5))"),
+            parenunary: ("-(5 + 5)", "(-(5 + 5))"),
+            parenbool: ("!(true == true)", "(!(true == true))"),
         }
     }
 
