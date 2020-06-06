@@ -475,7 +475,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_grouped_expression(&mut self) -> Result<ExpressionNode, String> {
-        let token = self.advance_tokens();
+        self.advance_tokens();
         let expr = self.parse_expression(OperatorPrecedence::LOWEST);
         if !self.is_next_token_of_type(lex::TokenType::RPAREN) {
             let s = match &self.peek_token {
