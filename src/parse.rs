@@ -33,6 +33,11 @@ mod ast {
             operator: lex::Token,
             right: Box<ExpressionNode>,
         },
+        IfConditional {
+            condition: Box<ExpressionNode>,
+            consequence: Box<StatementNode>,
+            alternative: Option<Box<StatementNode>>,
+        },
         Stub,
     }
 
@@ -77,6 +82,14 @@ mod ast {
                 ExpressionKind::PrefixExpression { operator, right } => {
                     write!(f, "({}{})", operator.get_literal().unwrap(), right)
                 }
+                ExpressionKind::IfConditional {
+                    condition,
+                    consequence,
+                    alternative,
+                } => match &alternative {
+                    Some(a) => write!(f, "if {} {} else {}", condition, consequence, a),
+                    None => write!(f, "if {} {}", condition, consequence),
+                },
                 ExpressionKind::Stub => f.write_str("<STUB>"),
             }
         }
@@ -93,6 +106,9 @@ mod ast {
         },
         Expression {
             expression: ExpressionNode,
+        },
+        BlockStatement {
+            statements: Vec<StatementNode>,
         },
     }
 
@@ -122,6 +138,12 @@ mod ast {
                     write!(f, "{} {};", self.get_token_literal().unwrap(), value)
                 }
                 StatementKind::Expression { expression } => write!(f, "{}", expression),
+                StatementKind::BlockStatement { statements } => {
+                    for statement in statements {
+                        write!(f, "{}", statement)?;
+                    }
+                    write!(f, "")
+                }
             }
         }
     }
@@ -388,6 +410,7 @@ impl<'a> Parser<'a> {
             lex::TokenType::TRUE => self.parse_boolean_literal()?,
             lex::TokenType::FALSE => self.parse_boolean_literal()?,
             lex::TokenType::LPAREN => self.parse_grouped_expression()?,
+            lex::TokenType::IF => self.parse_if_expression()?,
             _ => return Ok(None),
         };
         Ok(Some(parse_attempt))
@@ -456,7 +479,7 @@ impl<'a> Parser<'a> {
         let expr = self.parse_expression(OperatorPrecedence::LOWEST);
         if !self.is_next_token_of_type(lex::TokenType::RPAREN) {
             let s = match &self.peek_token {
-                Some(t) => {t.get_literal().unwrap().as_ref()},
+                Some(t) => t.get_literal().unwrap().as_ref(),
                 None => "EOF",
             };
 
@@ -464,6 +487,52 @@ impl<'a> Parser<'a> {
         } else {
             self.advance_tokens();
             expr
+        }
+    }
+
+    fn parse_if_expression(&mut self) -> Result<ExpressionNode, String> {
+        if !self.is_next_token_of_type(lex::TokenType::LPAREN) {
+            return Err(format!("Expecting LPAREN, got {:?}", self.peek_token));
+        }
+        let original_token = self.advance_tokens();
+        self.advance_tokens();
+        let condition = self.parse_expression(OperatorPrecedence::LOWEST)?;
+        if !self.is_next_token_of_type(lex::TokenType::RPAREN) {
+            return Err(format!("Expecting RPAREN, got {:?}", self.peek_token));
+        }
+        self.advance_tokens();
+        if !self.is_next_token_of_type(lex::TokenType::LBRACE) {
+            return Err(format!("Expecting LBRACE, got {:?}", self.peek_token));
+        }
+        self.advance_tokens();
+
+        let consequence = self.parse_block_statement()?;
+
+        if self.is_next_token_of_type(lex::TokenType::ELSE) {
+            self.advance_tokens();
+            if !self.is_next_token_of_type(lex::TokenType::LBRACE) {
+                return Err(format!("Expecting LBRACE, got {:?}", self.peek_token));
+            }
+            self.advance_tokens();
+
+            let alternative = self.parse_block_statement()?;
+            Ok(ExpressionNode {
+                token: original_token,
+                kind: ExpressionKind::IfConditional {
+                    condition: Box::new(condition),
+                    consequence: Box::new(consequence),
+                    alternative: Some(Box::new(alternative)),
+                },
+            })
+        } else {
+            Ok(ExpressionNode {
+                token: original_token,
+                kind: ExpressionKind::IfConditional {
+                    condition: Box::new(condition),
+                    consequence: Box::new(consequence),
+                    alternative: None,
+                },
+            })
         }
     }
 
@@ -492,6 +561,22 @@ impl<'a> Parser<'a> {
                 operator: expr_token,
                 right: Box::new(rhs),
             },
+        })
+    }
+
+    fn parse_block_statement(&mut self) -> Result<StatementNode, String> {
+        let mut statements = Vec::new();
+        let token = self.advance_tokens();
+        while !self.is_current_token_of_type(lex::TokenType::RBRACE)
+            && !self.is_current_token_of_type(lex::TokenType::EOF)
+        {
+            let statement = self.parse_statement()?;
+            statements.push(statement);
+            self.advance_tokens();
+        }
+        Ok(StatementNode {
+            token,
+            kind: StatementKind::BlockStatement { statements },
         })
     }
 }
@@ -886,7 +971,7 @@ mod tests {
         let length = program.statements.len();
         assert_eq!(
             length, 2,
-            "Expecting program to contain 2 statement, got {}",
+            "Expecting program to contain 2 statements, got {}",
             length
         );
         let statement_true = program.statements.get(0).unwrap();
@@ -901,6 +986,102 @@ mod tests {
             StatementKind::Expression { expression } => {
                 check_is_boolean(expression, false);
             }
+            _ => assert!(false, "Encountered unexpected non-expression statement"),
+        }
+    }
+
+    #[test]
+    fn test_parse_if_expression() {
+        let input = "if (x < y) { x }";
+        let lexer = lex::Lexer::for_str(input);
+        let mut parser = Parser::for_lexer(lexer);
+        let parsed = parser.parse();
+        assert_ne!(
+            parsed.is_err(),
+            true,
+            "Parser failed with errors \"{:?}\"",
+            parser.errors
+        );
+        let program = parsed.unwrap();
+        let length = program.statements.len();
+        assert_eq!(
+            length, 1,
+            "Expecting program to contain 1 statement, got {}",
+            length
+        );
+        let statement = program.statements.get(0).unwrap();
+        match &statement.kind {
+            StatementKind::Expression { expression } => match &expression.kind {
+                ExpressionKind::IfConditional {
+                    condition,
+                    consequence,
+                    alternative,
+                } => {
+                    assert_eq!(format!("{}", condition), "(x < y)");
+                    match &consequence.kind {
+                        StatementKind::BlockStatement { statements } => {
+                            assert_eq!(statements.len(), 1)
+                        }
+                        _ => assert!(false, "Consequence not a BlockStatement"),
+                    }
+                    assert_eq!(format!("{}", consequence), "x");
+                    assert!(alternative.is_none())
+                }
+                _ => assert!(false, "Expecting IfConditional, got {:?}", expression.kind),
+            },
+            _ => assert!(false, "Encountered unexpected non-expression statement"),
+        }
+    }
+
+    #[test]
+    fn test_parse_if_else_expression() {
+        let input = "if (x < y) { x } else { y }";
+        let lexer = lex::Lexer::for_str(input);
+        let mut parser = Parser::for_lexer(lexer);
+        let parsed = parser.parse();
+        assert_ne!(
+            parsed.is_err(),
+            true,
+            "Parser failed with errors \"{:?}\"",
+            parser.errors
+        );
+        let program = parsed.unwrap();
+        let length = program.statements.len();
+        assert_eq!(
+            length, 1,
+            "Expecting program to contain 1 statement, got {}",
+            length
+        );
+        let statement = program.statements.get(0).unwrap();
+        match &statement.kind {
+            StatementKind::Expression { expression } => match &expression.kind {
+                ExpressionKind::IfConditional {
+                    condition,
+                    consequence,
+                    alternative,
+                } => {
+                    assert_eq!(format!("{}", condition), "(x < y)");
+                    match &consequence.kind {
+                        StatementKind::BlockStatement { statements } => {
+                            assert_eq!(statements.len(), 1);
+                            assert_eq!(format!("{}", statements.get(0).unwrap()), "x")
+                        }
+                        _ => assert!(false, "Consequence not a BlockStatement"),
+                    }
+                    assert_eq!(format!("{}", consequence), "x");
+                    match alternative {
+                        Some(a) => match &a.kind {
+                            StatementKind::BlockStatement { statements } => {
+                                assert_eq!(statements.len(), 1);
+                                assert_eq!(format!("{}", statements.get(0).unwrap()), "y")
+                            }
+                            _ => assert!(false, "Alternative not a BlockStatement"),
+                        },
+                        None => assert!(false, "Alternative not present"),
+                    }
+                }
+                _ => assert!(false, "Expecting IfConditional, got {:?}", expression.kind),
+            },
             _ => assert!(false, "Encountered unexpected non-expression statement"),
         }
     }
