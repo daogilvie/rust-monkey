@@ -38,6 +38,10 @@ mod ast {
             consequence: Box<StatementNode>,
             alternative: Option<Box<StatementNode>>,
         },
+        FunctionLiteral {
+            parameters: Vec<ExpressionNode>,
+            body: Box<StatementNode>,
+        },
         Stub,
     }
 
@@ -90,6 +94,16 @@ mod ast {
                     Some(a) => write!(f, "if {} {} else {}", condition, consequence, a),
                     None => write!(f, "if {} {}", condition, consequence),
                 },
+                ExpressionKind::FunctionLiteral { parameters, body } => write!(
+                    f,
+                    "fn ({}) {}",
+                    parameters
+                        .into_iter()
+                        .map(|s| format!("{}", s))
+                        .collect::<Vec<String>>()
+                        .join(", "),
+                    body
+                ),
                 ExpressionKind::Stub => f.write_str("<STUB>"),
             }
         }
@@ -287,6 +301,27 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn advance_tokens_if_next_of_type(
+        &mut self,
+        expected_type: lex::TokenType,
+    ) -> Result<lex::Token, String> {
+        if let Some(t) = &self.peek_token {
+            if &t.token_type == &expected_type {
+                Ok(self.advance_tokens())
+            } else {
+                Err(format!(
+                    "Expecting {:?} but next token is {:?}",
+                    expected_type, self.peek_token
+                ))
+            }
+        } else {
+            Err(format!(
+                "Expecting {:?} but no next token found",
+                expected_type
+            ))
+        }
+    }
+
     fn get_next_token_precedence(&self) -> OperatorPrecedence {
         match &self.peek_token {
             None => OperatorPrecedence::LOWEST,
@@ -411,6 +446,7 @@ impl<'a> Parser<'a> {
             lex::TokenType::FALSE => self.parse_boolean_literal()?,
             lex::TokenType::LPAREN => self.parse_grouped_expression()?,
             lex::TokenType::IF => self.parse_if_expression()?,
+            lex::TokenType::FUNCTION => self.parse_function_literal()?,
             _ => return Ok(None),
         };
         Ok(Some(parse_attempt))
@@ -578,6 +614,35 @@ impl<'a> Parser<'a> {
             token,
             kind: StatementKind::BlockStatement { statements },
         })
+    }
+
+    fn parse_function_literal(&mut self) -> Result<ExpressionNode, String> {
+        let original_token = self.advance_tokens_if_next_of_type(lex::TokenType::LPAREN)?;
+        let parameters = self.parse_function_parameters()?;
+
+        self.advance_tokens_if_next_of_type(lex::TokenType::LBRACE)?;
+        let body = self.parse_block_statement()?;
+        Ok(ExpressionNode {
+            token: original_token,
+            kind: ExpressionKind::FunctionLiteral { parameters, body: Box::new(body) }
+        })
+    }
+
+    fn parse_function_parameters(&mut self) -> Result<Vec<ExpressionNode>, String> {
+        let mut params = Vec::new();
+        if self.is_next_token_of_type(lex::TokenType::RPAREN) {
+            self.advance_tokens();
+        } else {
+            self.advance_tokens();
+            params.push(self.parse_identifier()?);
+            while self.is_next_token_of_type(lex::TokenType::COMMA) {
+                self.advance_tokens();
+                self.advance_tokens();
+                params.push(self.parse_identifier()?);
+            }
+            self.advance_tokens_if_next_of_type(lex::TokenType::RPAREN)?;
+        }
+        Ok(params)
     }
 }
 
@@ -1081,6 +1146,134 @@ mod tests {
                     }
                 }
                 _ => assert!(false, "Expecting IfConditional, got {:?}", expression.kind),
+            },
+            _ => assert!(false, "Encountered unexpected non-expression statement"),
+        }
+    }
+
+    #[test]
+    fn test_parse_function_expression() {
+        let input = "fn(x, y) { x + y }";
+        let lexer = lex::Lexer::for_str(input);
+        let mut parser = Parser::for_lexer(lexer);
+        let parsed = parser.parse();
+        assert_ne!(
+            parsed.is_err(),
+            true,
+            "Parser failed with errors \"{:?}\"",
+            parser.errors
+        );
+        let program = parsed.unwrap();
+        let length = program.statements.len();
+        assert_eq!(
+            length, 1,
+            "Expecting program to contain 1 statement, got {}",
+            length
+        );
+        let statement = program.statements.get(0).unwrap();
+        match &statement.kind {
+            StatementKind::Expression { expression } => match &expression.kind {
+                ExpressionKind::FunctionLiteral { parameters, body } => {
+                    assert_eq!(parameters.len(), 2, "Expecting two params, got {:?}", parameters);
+                    check_is_identifier(parameters.get(0).unwrap(), "x");
+                    check_is_identifier(parameters.get(1).unwrap(), "y");
+                    match &body.kind {
+                        StatementKind::BlockStatement { statements } => {
+                            assert_eq!(statements.len(), 1);
+                            assert_eq!(format!("{}", statements.get(0).unwrap()), "(x + y)")
+                        }
+                        _ => assert!(false, "Body not a BlockStatement"),
+                    }
+                }
+                _ => assert!(
+                    false,
+                    "Expecting FunctionLiteral, got {:?}",
+                    expression.kind
+                ),
+            },
+            _ => assert!(false, "Encountered unexpected non-expression statement"),
+        }
+    }
+
+    #[test]
+    fn test_parse_function_expression_one_param() {
+        let input = "fn(x) { x }";
+        let lexer = lex::Lexer::for_str(input);
+        let mut parser = Parser::for_lexer(lexer);
+        let parsed = parser.parse();
+        assert_ne!(
+            parsed.is_err(),
+            true,
+            "Parser failed with errors \"{:?}\"",
+            parser.errors
+        );
+        let program = parsed.unwrap();
+        let length = program.statements.len();
+        assert_eq!(
+            length, 1,
+            "Expecting program to contain 1 statement, got {}",
+            length
+        );
+        let statement = program.statements.get(0).unwrap();
+        match &statement.kind {
+            StatementKind::Expression { expression } => match &expression.kind {
+                ExpressionKind::FunctionLiteral { parameters, body } => {
+                    assert_eq!(parameters.len(), 1, "Expecting one param, got {:?}", parameters);
+                    check_is_identifier(parameters.get(0).unwrap(), "x");
+                    match &body.kind {
+                        StatementKind::BlockStatement { statements } => {
+                            assert_eq!(statements.len(), 1);
+                            assert_eq!(format!("{}", statements.get(0).unwrap()), "x")
+                        }
+                        _ => assert!(false, "Body not a BlockStatement"),
+                    }
+                }
+                _ => assert!(
+                    false,
+                    "Expecting FunctionLiteral, got {:?}",
+                    expression.kind
+                ),
+            },
+            _ => assert!(false, "Encountered unexpected non-expression statement"),
+        }
+    }
+    #[test]
+    fn test_parse_function_expression_no_params() {
+        let input = "fn() { x + y }";
+        let lexer = lex::Lexer::for_str(input);
+        let mut parser = Parser::for_lexer(lexer);
+        let parsed = parser.parse();
+        assert_ne!(
+            parsed.is_err(),
+            true,
+            "Parser failed with errors \"{:?}\"",
+            parser.errors
+        );
+        let program = parsed.unwrap();
+        let length = program.statements.len();
+        assert_eq!(
+            length, 1,
+            "Expecting program to contain 1 statement, got {}",
+            length
+        );
+        let statement = program.statements.get(0).unwrap();
+        match &statement.kind {
+            StatementKind::Expression { expression } => match &expression.kind {
+                ExpressionKind::FunctionLiteral { parameters, body } => {
+                    assert_eq!(parameters.len(), 0, "Expecting zero params, got {:?}", parameters);
+                    match &body.kind {
+                        StatementKind::BlockStatement { statements } => {
+                            assert_eq!(statements.len(), 1);
+                            assert_eq!(format!("{}", statements.get(0).unwrap()), "(x + y)")
+                        }
+                        _ => assert!(false, "Body not a BlockStatement"),
+                    }
+                }
+                _ => assert!(
+                    false,
+                    "Expecting FunctionLiteral, got {:?}",
+                    expression.kind
+                ),
             },
             _ => assert!(false, "Encountered unexpected non-expression statement"),
         }
