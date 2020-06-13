@@ -42,6 +42,10 @@ mod ast {
             parameters: Vec<ExpressionNode>,
             body: Box<StatementNode>,
         },
+        CallExpression {
+            function: Box<ExpressionNode>,
+            arguments: Vec<ExpressionNode>,
+        },
         Stub,
     }
 
@@ -103,6 +107,19 @@ mod ast {
                         .collect::<Vec<String>>()
                         .join(", "),
                     body
+                ),
+                ExpressionKind::CallExpression {
+                    function,
+                    arguments,
+                } => write!(
+                    f,
+                    "{}({})",
+                    function,
+                    arguments
+                        .into_iter()
+                        .map(|s| format!("{}", s))
+                        .collect::<Vec<String>>()
+                        .join(", ")
                 ),
                 ExpressionKind::Stub => f.write_str("<STUB>"),
             }
@@ -230,6 +247,7 @@ fn get_operator_precedence(&token: &lex::TokenType) -> OperatorPrecedence {
         lex::TokenType::MINUS => OperatorPrecedence::SUM,
         lex::TokenType::SLASH => OperatorPrecedence::PRODUCT,
         lex::TokenType::ASTERISK => OperatorPrecedence::PRODUCT,
+        lex::TokenType::LPAREN => OperatorPrecedence::CALL,
         _ => OperatorPrecedence::LOWEST,
     }
 }
@@ -464,6 +482,7 @@ impl<'a> Parser<'a> {
                 lex::TokenType::LT => true,
                 lex::TokenType::ASTERISK => true,
                 lex::TokenType::SLASH => true,
+                lex::TokenType::LPAREN => true,
                 _ => false,
             },
         }
@@ -588,16 +607,21 @@ impl<'a> Parser<'a> {
     fn parse_infix_expression(&mut self, lhs: ExpressionNode) -> Result<ExpressionNode, String> {
         let current_precedence = self.get_current_token_precedence();
         let expr_token = self.advance_tokens();
-        let rhs = self.parse_expression(current_precedence)?;
+        match &expr_token.token_type {
+            lex::TokenType::LPAREN => Ok(self.parse_call_expression(expr_token, lhs)?),
+            _ => {
+                let rhs = self.parse_expression(current_precedence)?;
 
-        Ok(ExpressionNode {
-            token: expr_token.clone(),
-            kind: ExpressionKind::InfixExpression {
-                left: Box::new(lhs),
-                operator: expr_token,
-                right: Box::new(rhs),
-            },
-        })
+                Ok(ExpressionNode {
+                    token: expr_token.clone(),
+                    kind: ExpressionKind::InfixExpression {
+                        left: Box::new(lhs),
+                        operator: expr_token,
+                        right: Box::new(rhs),
+                    },
+                })
+            }
+        }
     }
 
     fn parse_block_statement(&mut self) -> Result<StatementNode, String> {
@@ -624,7 +648,10 @@ impl<'a> Parser<'a> {
         let body = self.parse_block_statement()?;
         Ok(ExpressionNode {
             token: original_token,
-            kind: ExpressionKind::FunctionLiteral { parameters, body: Box::new(body) }
+            kind: ExpressionKind::FunctionLiteral {
+                parameters,
+                body: Box::new(body),
+            },
         })
     }
 
@@ -639,6 +666,37 @@ impl<'a> Parser<'a> {
                 self.advance_tokens();
                 self.advance_tokens();
                 params.push(self.parse_identifier()?);
+            }
+            self.advance_tokens_if_next_of_type(lex::TokenType::RPAREN)?;
+        }
+        Ok(params)
+    }
+
+    fn parse_call_expression(
+        &mut self,
+        original_token: lex::Token,
+        function: ExpressionNode,
+    ) -> Result<ExpressionNode, String> {
+        let arguments = self.parse_call_arguments()?;
+        Ok(ExpressionNode {
+            token: original_token,
+            kind: ExpressionKind::CallExpression {
+                function: Box::new(function),
+                arguments,
+            },
+        })
+    }
+
+    fn parse_call_arguments(&mut self) -> Result<Vec<ExpressionNode>, String> {
+        let mut params = Vec::new();
+        if self.is_next_token_of_type(lex::TokenType::RPAREN) {
+            self.advance_tokens();
+        } else {
+            params.push(self.parse_expression(OperatorPrecedence::LOWEST)?);
+            while self.is_next_token_of_type(lex::TokenType::COMMA) {
+                self.advance_tokens();
+                self.advance_tokens();
+                params.push(self.parse_expression(OperatorPrecedence::LOWEST)?);
             }
             self.advance_tokens_if_next_of_type(lex::TokenType::RPAREN)?;
         }
@@ -692,7 +750,20 @@ mod tests {
                     expected_value, value
                 );
             }
-            _ => assert!(false, "Expression is not an BooleanLiteral"),
+            _ => assert!(false, "Expression is not a BooleanLiteral"),
+        }
+    }
+
+    fn check_infix_expression(expression: &ExpressionNode, expected_str: &str) {
+        if let ExpressionKind::InfixExpression {
+            left: _,
+            operator: _,
+            right: _,
+        } = expression.kind
+        {
+            assert_eq!(format!("{}", expression), expected_str);
+        } else {
+            assert!(false, "Expression is not an InfixExpression");
         }
     }
 
@@ -1017,6 +1088,9 @@ mod tests {
             parendivplus: ("2 / (5 + 5)", "(2 / (5 + 5))"),
             parenunary: ("-(5 + 5)", "(-(5 + 5))"),
             parenbool: ("!(true == true)", "(!(true == true))"),
+            simplecall: ("a + add(b * c) + d", "((a + add((b * c))) + d)"),
+            nestcall: ("add(a, b, 1, 2 * 3, 4 + 5, add(6, 7 * 8))", "add(a, b, 1, (2 * 3), (4 + 5), add(6, (7 * 8)))"),
+            callbigexpr: ("add(a + b + c * d / f + g)", "add((((a + b) + ((c * d) / f)) + g))"),
         }
     }
 
@@ -1174,7 +1248,12 @@ mod tests {
         match &statement.kind {
             StatementKind::Expression { expression } => match &expression.kind {
                 ExpressionKind::FunctionLiteral { parameters, body } => {
-                    assert_eq!(parameters.len(), 2, "Expecting two params, got {:?}", parameters);
+                    assert_eq!(
+                        parameters.len(),
+                        2,
+                        "Expecting two params, got {:?}",
+                        parameters
+                    );
                     check_is_identifier(parameters.get(0).unwrap(), "x");
                     check_is_identifier(parameters.get(1).unwrap(), "y");
                     match &body.kind {
@@ -1218,7 +1297,12 @@ mod tests {
         match &statement.kind {
             StatementKind::Expression { expression } => match &expression.kind {
                 ExpressionKind::FunctionLiteral { parameters, body } => {
-                    assert_eq!(parameters.len(), 1, "Expecting one param, got {:?}", parameters);
+                    assert_eq!(
+                        parameters.len(),
+                        1,
+                        "Expecting one param, got {:?}",
+                        parameters
+                    );
                     check_is_identifier(parameters.get(0).unwrap(), "x");
                     match &body.kind {
                         StatementKind::BlockStatement { statements } => {
@@ -1237,6 +1321,7 @@ mod tests {
             _ => assert!(false, "Encountered unexpected non-expression statement"),
         }
     }
+
     #[test]
     fn test_parse_function_expression_no_params() {
         let input = "fn() { x + y }";
@@ -1260,7 +1345,12 @@ mod tests {
         match &statement.kind {
             StatementKind::Expression { expression } => match &expression.kind {
                 ExpressionKind::FunctionLiteral { parameters, body } => {
-                    assert_eq!(parameters.len(), 0, "Expecting zero params, got {:?}", parameters);
+                    assert_eq!(
+                        parameters.len(),
+                        0,
+                        "Expecting zero params, got {:?}",
+                        parameters
+                    );
                     match &body.kind {
                         StatementKind::BlockStatement { statements } => {
                             assert_eq!(statements.len(), 1);
@@ -1274,6 +1364,44 @@ mod tests {
                     "Expecting FunctionLiteral, got {:?}",
                     expression.kind
                 ),
+            },
+            _ => assert!(false, "Encountered unexpected non-expression statement"),
+        }
+    }
+
+    #[test]
+    fn test_parse_call_expression() {
+        let input = "add(1, 2 * 3, 4 + 5);";
+        let lexer = lex::Lexer::for_str(input);
+        let mut parser = Parser::for_lexer(lexer);
+        let parsed = parser.parse();
+        assert_ne!(
+            parsed.is_err(),
+            true,
+            "Parser failed with errors \"{:?}\"",
+            parser.errors
+        );
+        let program = parsed.unwrap();
+        let length = program.statements.len();
+        assert_eq!(
+            length, 1,
+            "Expecting program to contain 1 statement, got {}",
+            length
+        );
+        let statement = program.statements.get(0).unwrap();
+        match &statement.kind {
+            StatementKind::Expression { expression } => match &expression.kind {
+                ExpressionKind::CallExpression {
+                    function,
+                    arguments,
+                } => {
+                    check_is_identifier(function, "add");
+                    assert_eq!(arguments.len(), 3);
+                    check_is_int_literal(arguments.get(0).unwrap(), 1);
+                    check_infix_expression(arguments.get(1).unwrap(), "(2 * 3)");
+                    check_infix_expression(arguments.get(2).unwrap(), "(4 + 5)");
+                }
+                _ => assert!(false, "Expecting CallExpression, got {:?}", expression.kind),
             },
             _ => assert!(false, "Encountered unexpected non-expression statement"),
         }
