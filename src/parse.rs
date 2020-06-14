@@ -356,36 +356,22 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_let_statement(&mut self) -> Result<StatementNode, String> {
-        if !self.is_next_token_of_type(IDENT) {
-            return Err(format!(
-                "Expecting assign token after ident, got {}",
-                match &self.peek_token {
-                    None => String::from("None"),
-                    Some(t) => format!("{}", t),
-                }
-            ));
-        }
-        let original_token = self.advance_tokens();
-        if !self.is_next_token_of_type(ASSIGN) {
-            return Err(format!(
-                "Expecting assign token after ident, got {}",
-                match &self.peek_token {
-                    None => String::from("None"),
-                    Some(t) => format!("{}", t),
-                }
-            ));
-        }
-        let ident_token = self.advance_tokens();
+        println!("P {:?} {:?}", self.current_token, self.peek_token);
+        let original_token = self.advance_tokens_if_next_of_type(IDENT)?;
+        println!("P2 {:?} {:?}", self.current_token, self.peek_token);
+        let ident_token = self.advance_tokens_if_next_of_type(ASSIGN)?;
+        println!("P3 {:?} {:?}", self.current_token, self.peek_token);
         let ident_name = ident_token.get_literal().unwrap().clone();
-        // TODO: We would do the value, but instead we will skip for now
-        while self.current_token.token_type != SEMICOLON {
+        self.advance_tokens();
+        println!("P4 {:?} {:?}", self.current_token, self.peek_token);
+        let value = self.parse_expression(OperatorPrecedence::LOWEST)?;
+        if self.is_next_token_of_type(SEMICOLON) {
             self.advance_tokens();
         }
         let name = ExpressionNode {
             token: ident_token,
             kind: ExpressionKind::Identifier { name: ident_name },
         };
-        let value = ExpressionNode::make_stub();
         Ok(StatementNode {
             token: original_token,
             kind: StatementKind::Let { name, value },
@@ -394,11 +380,10 @@ impl<'a> Parser<'a> {
 
     fn parse_return_statement(&mut self) -> Result<StatementNode, String> {
         let original_token = self.advance_tokens();
-        // TODO: We would do the value, but instead we will skip for now
-        while self.current_token.token_type != SEMICOLON {
+        let value = self.parse_expression(OperatorPrecedence::LOWEST)?;
+        if self.is_next_token_of_type(SEMICOLON) {
             self.advance_tokens();
         }
-        let value = ExpressionNode::make_stub();
         Ok(StatementNode {
             token: original_token,
             kind: StatementKind::Return { value },
@@ -767,6 +752,50 @@ mod tests {
         }
     }
 
+    mod test_let_statements {
+        use super::*;
+        macro_rules! let_tests {
+        ($($name:ident: $value:expr, $checkfn:ident,)*) => {
+            $(
+                #[test]
+                fn $name() {
+                    let (input, expected_ident, expected_value) = $value;
+                    let lexer = lex::Lexer::for_str(input);
+                    let mut parser = Parser::for_lexer(lexer);
+                    let parsed = parser.parse();
+                    assert_ne!(
+                        parsed.is_err(),
+                        true,
+                        "Parser failed with errors \"{:?}\"",
+                        parser.errors
+                    );
+                    let program = parsed.unwrap();
+                    let length = program.statements.len();
+                    assert_eq!(
+                        length, 1,
+                        "Expecting program to contain 1 statement, got {}",
+                        length
+                    );
+                    let statement = program.statements.get(0).unwrap();
+                    match &statement.kind {
+                        StatementKind::Let { name, value } => {
+                            check_is_identifier(name, expected_ident);
+                            $checkfn(value, expected_value);
+                        }
+                        _ => assert!(false, "Encountered unexpected non-let statement"),
+                    }
+
+                })*
+        }
+    }
+
+        let_tests! {
+            xfive: ("let x = 5;", "x", 5), check_is_int_literal,
+            ytrue: ("let y = true;", "y", true), check_is_boolean,
+            foobary: ("let foobar = y;", "foobar", "y"), check_is_identifier,
+        }
+    }
+
     #[test]
     fn test_parse_let_statements() {
         let input = "let x = 5;
@@ -791,11 +820,14 @@ mod tests {
             "Expecting program to contain 3 statements, got {}",
             length
         );
-        let expected_idents = vec![("x", "5"), ("y", "10"), ("foobar", "838383")];
+        let expected_idents = vec![("x", 5), ("y", 10), ("foobar", 838383)];
         let pairs = program.statements.iter().zip(expected_idents);
         for (statement, ident) in pairs {
             match &statement.kind {
-                StatementKind::Let { name, value: _ } => check_is_identifier(name, ident.0),
+                StatementKind::Let { name, value } => {
+                    check_is_identifier(name, ident.0);
+                    check_is_int_literal(value, ident.1);
+                }
                 _ => assert!(false, "Encountered unexpected non-let statement"),
             }
         }
@@ -819,10 +851,10 @@ mod tests {
         assert_eq!(parser.errors.len(), 4);
 
         let expected_errors = vec![
-            "Expecting assign token after ident, got INT(\"5\")",
-            "Expecting assign token after ident, got ASSIGN(\"=\")",
+            "Expecting ASSIGN but next token is Some(Token { token_type: INT, literal: Some(\"5\") })",
+            "Expecting IDENT but next token is Some(Token { token_type: ASSIGN, literal: Some(\"=\") })",
             "Cannot parse expression statement from ASSIGN(\"=\")",
-            "Expecting assign token after ident, got INT(\"838383\")",
+            "Expecting IDENT but next token is Some(Token { token_type: INT, literal: Some(\"838383\") })",
         ];
         for (actual, expected) in parser.errors.iter().zip(expected_errors) {
             assert_eq!(
@@ -833,6 +865,48 @@ mod tests {
         }
     }
 
+    mod test_return_statements {
+        use super::*;
+        macro_rules! return_tests {
+        ($($name:ident: $value:expr, $checkfn:ident,)*) => {
+            $(
+                #[test]
+                fn $name() {
+                    let (input, expected_value) = $value;
+                    let lexer = lex::Lexer::for_str(input);
+                    let mut parser = Parser::for_lexer(lexer);
+                    let parsed = parser.parse();
+                    assert_ne!(
+                        parsed.is_err(),
+                        true,
+                        "Parser failed with errors \"{:?}\"",
+                        parser.errors
+                    );
+                    let program = parsed.unwrap();
+                    let length = program.statements.len();
+                    assert_eq!(
+                        length, 1,
+                        "Expecting program to contain 1 statement, got {}",
+                        length
+                    );
+                    let statement = program.statements.get(0).unwrap();
+                    match &statement.kind {
+                        StatementKind::Return { value } => {
+                            $checkfn(value, expected_value);
+                        }
+                        _ => assert!(false, "Encountered unexpected non-return statement"),
+                    }
+
+                })*
+        }
+    }
+
+        return_tests! {
+            retfive: ("return 5;", 5), check_is_int_literal,
+            rettrue: ("return true;", true), check_is_boolean,
+            retident: ("return y;", "y"), check_is_identifier,
+        }
+    }
     #[test]
     fn test_parse_return_statements() {
         let input = "return 5;
@@ -857,14 +931,16 @@ mod tests {
             "Expecting program to contain 3 statements, got {}",
             length
         );
-        for statement in program.statements {
-            match statement.kind {
-                StatementKind::Return { value: _ } => {
+        let expected_ints = vec![5, 10, 838383];
+        for (statement, expected) in program.statements.iter().zip(expected_ints) {
+            match &statement.kind {
+                StatementKind::Return { value } => {
                     assert_eq!(
                         statement.get_token_literal().unwrap(),
                         "return",
                         "Return statement has non-return token"
                     );
+                    check_is_int_literal(value, expected);
                 }
                 _ => assert!(false, "Encountered unexpected non-return statement"),
             }
