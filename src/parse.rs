@@ -356,14 +356,10 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_let_statement(&mut self) -> Result<StatementNode, String> {
-        println!("P {:?} {:?}", self.current_token, self.peek_token);
         let original_token = self.advance_tokens_if_next_of_type(IDENT)?;
-        println!("P2 {:?} {:?}", self.current_token, self.peek_token);
         let ident_token = self.advance_tokens_if_next_of_type(ASSIGN)?;
-        println!("P3 {:?} {:?}", self.current_token, self.peek_token);
         let ident_name = ident_token.get_literal().unwrap().clone();
         self.advance_tokens();
-        println!("P4 {:?} {:?}", self.current_token, self.peek_token);
         let value = self.parse_expression(OperatorPrecedence::LOWEST)?;
         if self.is_next_token_of_type(SEMICOLON) {
             self.advance_tokens();
