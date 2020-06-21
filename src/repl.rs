@@ -1,6 +1,5 @@
 use std::io::{self, stdin, stdout, Write};
-#[path = "./lex.rs"]
-mod lex;
+use crate::lex;
 const PROMPT: &str = ">> ";
 
 pub fn start(preamble: String) -> io::Result<()> {

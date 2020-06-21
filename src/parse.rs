@@ -1,9 +1,8 @@
 use std::mem;
 
-#[path = "./lex.rs"]
-mod lex;
+use crate::lex;
 
-use lex::TokenType::*;
+use crate::lex::TokenType::*;
 
 mod ast {
     use super::lex;
