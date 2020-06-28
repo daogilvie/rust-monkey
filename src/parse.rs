@@ -45,22 +45,12 @@ mod ast {
             function: Box<ExpressionNode>,
             arguments: Vec<ExpressionNode>,
         },
-        Stub,
     }
 
     #[derive(Debug)]
     pub struct ExpressionNode {
         pub token: lex::Token,
         pub kind: ExpressionKind,
-    }
-
-    impl ExpressionNode {
-        pub fn make_stub() -> ExpressionNode {
-            ExpressionNode {
-                token: lex::Token::with_str(lex::TokenType::ILLEGAL, "<STUB>"),
-                kind: ExpressionKind::Stub,
-            }
-        }
     }
 
     impl ASTNode for ExpressionNode {
@@ -120,7 +110,6 @@ mod ast {
                         .collect::<Vec<String>>()
                         .join(", ")
                 ),
-                ExpressionKind::Stub => f.write_str("<STUB>"),
             }
         }
     }
