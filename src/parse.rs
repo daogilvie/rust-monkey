@@ -240,7 +240,7 @@ fn get_operator_precedence(&token: &lex::TokenType) -> OperatorPrecedence {
     }
 }
 
-struct Parser<'a> {
+pub struct Parser<'a> {
     lexer: lex::Lexer<'a>,
     current_token: lex::Token,
     peek_token: Option<lex::Token>,
@@ -248,7 +248,7 @@ struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    fn for_lexer(mut lexer: lex::Lexer) -> Parser {
+    pub fn for_lexer(mut lexer: lex::Lexer) -> Parser {
         let first_token = lexer.next_token().expect("Passed an empty lexer");
         let second_token = lexer.next_token().expect("Passed an empty lexer");
 
@@ -292,6 +292,10 @@ impl<'a> Parser<'a> {
         }
     }
 
+    pub fn get_errors(&self) -> &Vec<String> {
+        &self.errors
+    }
+
     fn parse_statement(&mut self) -> Result<StatementNode, String> {
         match self.current_token.token_type {
             LET => self.parse_let_statement(),
@@ -316,13 +320,13 @@ impl<'a> Parser<'a> {
                 Ok(self.advance_tokens())
             } else {
                 Err(format!(
-                    "Expecting {:?} but next token is {:?}",
-                    expected_type, self.peek_token
+                    "Expecting {} but next token is {}",
+                    expected_type, &t
                 ))
             }
         } else {
             Err(format!(
-                "Expecting {:?} but no next token found",
+                "Expecting {} but no next token found",
                 expected_type
             ))
         }

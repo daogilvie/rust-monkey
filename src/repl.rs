@@ -1,5 +1,7 @@
-use std::io::{self, stdin, stdout, Write};
 use crate::lex;
+use crate::parse;
+use std::io::{self, stdin, stdout, Write};
+
 const PROMPT: &str = ">> ";
 
 pub fn start(preamble: String) -> io::Result<()> {
@@ -17,8 +19,16 @@ pub fn start(preamble: String) -> io::Result<()> {
             break;
         }
         let lexer = lex::Lexer::for_str(&trimmed);
-        for token in lexer {
-            writeln!(out, "{:?}", token).unwrap();
+        let mut parser = parse::Parser::for_lexer(lexer);
+        let program = parser.parse();
+        match program {
+            Ok(p) => print!("{}", p),
+            Err(s) => {
+                eprintln!("{}", s);
+                for e in parser.get_errors() {
+                    eprintln!(" -> {}", e)
+                }
+            }
         }
     }
     Ok(())
