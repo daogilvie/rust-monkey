@@ -4,7 +4,7 @@ use crate::lex;
 
 use crate::lex::TokenType::*;
 
-mod ast {
+pub mod ast {
     use super::lex;
     use std::fmt;
 
@@ -169,7 +169,7 @@ mod ast {
 
     /// Root node of all Monkey ASTs
     pub struct Program {
-        pub statements: Vec<StatementNode>,
+        pub statements: Vec<StatementNode>
     }
 
     impl fmt::Display for Program {
@@ -839,10 +839,10 @@ mod tests {
         assert_eq!(parser.errors.len(), 4);
 
         let expected_errors = vec![
-            "Expecting ASSIGN but next token is Some(Token { token_type: INT, literal: Some(\"5\") })",
-            "Expecting IDENT but next token is Some(Token { token_type: ASSIGN, literal: Some(\"=\") })",
+            "Expecting ASSIGN but next token is INT(\"5\")",
+            "Expecting IDENT but next token is ASSIGN(\"=\")",
             "Cannot parse expression statement from ASSIGN(\"=\")",
-            "Expecting IDENT but next token is Some(Token { token_type: INT, literal: Some(\"838383\") })",
+            "Expecting IDENT but next token is INT(\"838383\")",
         ];
         for (actual, expected) in parser.errors.iter().zip(expected_errors) {
             assert_eq!(
