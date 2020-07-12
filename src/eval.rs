@@ -1,19 +1,37 @@
+use crate::lex::{Token, TokenType};
 use crate::object::*;
 use crate::parse;
 use crate::parse::ast::{ExpressionKind, ExpressionNode, StatementKind, StatementNode};
 
+fn eval_prefix_expression(operator: &Token, right: Object) -> Result<Object, String> {
+   match &operator.token_type {
+       TokenType::BANG => {
+         match right.get_type() {
+             ObjectType::Integer(i) => if i == 0 { Ok(TRUE) } else { Ok(FALSE) },
+             ObjectType::Boolean(b) => if b { Ok(FALSE) } else { Ok(TRUE) },
+             ObjectType::Null => Ok(TRUE)
+         }
+       },
+       _ => Err(format!("Cannot eval prefix from {}", operator))
+   }
+}
+
 pub fn eval_expression(expr: &ExpressionNode) -> Result<Object, String> {
-    match expr.kind {
+    match &expr.kind {
         ExpressionKind::IntegerLiteral { value } => {
-            Ok(Object::with_type(ObjectType::Integer(value)))
+            Ok(Object::with_type(ObjectType::Integer(*value)))
         }
         ExpressionKind::BooleanLiteral { value } => {
-            if value {
+            if *value {
                 Ok(TRUE)
             } else {
                 Ok(FALSE)
             }
-        }
+        },
+        ExpressionKind::PrefixExpression { operator, right } => {
+            let eval_r = eval_expression(&*right)?;
+            eval_prefix_expression(&operator, eval_r)
+        },
         _ => Err(format!("Cannot eval '{:?}'", expr.kind)),
     }
 }
@@ -75,6 +93,30 @@ mod tests {
         let cases = vec![("true", true), ("false", false)];
         for (expr, value) in cases {
             check_boolean_object(check_eval(expr).unwrap(), &value);
+        }
+    }
+
+    mod test_prefix_eval {
+        use super::*;
+        macro_rules! bang_tests {
+        ($($name:ident: $value:expr,)*) => {
+            $(
+                #[test]
+                fn $name() {
+                    let (input, expected) = $value;
+                    check_boolean_object(check_eval(input).unwrap(), &expected);
+                })*
+
+        }
+    }
+
+        bang_tests! {
+            bangtrue: ("!true", false),
+            bangfalse: ("!false", true),
+            bangfive: ("!5", false),
+            bangbangtrue: ("!!true", true),
+            bangbangfalse: ("!!false", false),
+            bangbangfive: ("!!5", true),
         }
     }
 }
