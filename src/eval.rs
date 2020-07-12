@@ -6,7 +6,10 @@ pub fn eval_expression(expr: &ExpressionNode) -> Result<Object, String> {
     match expr.kind {
         ExpressionKind::IntegerLiteral { value } => {
             Ok(Object::with_type(ObjectType::Integer(value)))
-        }
+        },
+        ExpressionKind::BooleanLiteral { value } => {
+            Ok(Object::with_type(ObjectType::Boolean(value)))
+        },
         _ => Err(format!("Cannot eval '{:?}'", expr.kind)),
     }
 }
@@ -33,7 +36,7 @@ mod tests {
     use crate::lex;
 
     fn check_eval(input: &str) -> Result<Object, String> {
-        let mut l = lex::Lexer::for_str(input);
+        let l = lex::Lexer::for_str(input);
         let mut p = parse::Parser::for_lexer(l);
         let prog = p.parse()?;
         eval_program(prog)
@@ -47,11 +50,27 @@ mod tests {
         }
     }
 
+    fn check_boolean_object(obj: Object, expected: &bool) {
+        if let ObjectType::Boolean(b) = obj.get_type() {
+            assert_eq!(&b, expected);
+        } else {
+            assert!(false, "object was not boolean type");
+        }
+    }
+
     #[test]
     fn test_eval_integer_expressions() {
         let cases = vec![("5", 5), ("10", 10)];
         for (expr, value) in cases {
             check_integer_object(check_eval(expr).unwrap(), &value);
+        }
+    }
+
+    #[test]
+    fn test_eval_boolean_literals() {
+        let cases = vec![("true", true), ("false", false)];
+        for (expr, value) in cases {
+            check_boolean_object(check_eval(expr).unwrap(), &value);
         }
     }
 }
