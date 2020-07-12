@@ -11,6 +11,7 @@ pub struct Object {
     o_type: ObjectType,
 }
 
+
 impl Object {
 
     pub fn with_type(o_type: ObjectType) -> Self {
@@ -31,3 +32,11 @@ impl Object {
         }
     }
 }
+
+pub const TRUE: Object = Object {
+    o_type: ObjectType::Boolean(true)
+};
+pub const FALSE: Object = Object { 
+    o_type: ObjectType::Boolean(false)
+};
+pub const NULL: Object = Object { o_type: ObjectType::Null };

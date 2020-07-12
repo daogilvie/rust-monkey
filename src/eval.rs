@@ -1,4 +1,4 @@
-use crate::object::{Object, ObjectType};
+use crate::object::*;
 use crate::parse;
 use crate::parse::ast::{ExpressionKind, ExpressionNode, StatementKind, StatementNode};
 
@@ -6,10 +6,14 @@ pub fn eval_expression(expr: &ExpressionNode) -> Result<Object, String> {
     match expr.kind {
         ExpressionKind::IntegerLiteral { value } => {
             Ok(Object::with_type(ObjectType::Integer(value)))
-        },
+        }
         ExpressionKind::BooleanLiteral { value } => {
-            Ok(Object::with_type(ObjectType::Boolean(value)))
-        },
+            if value {
+                Ok(TRUE)
+            } else {
+                Ok(FALSE)
+            }
+        }
         _ => Err(format!("Cannot eval '{:?}'", expr.kind)),
     }
 }
