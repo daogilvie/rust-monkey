@@ -4,16 +4,33 @@ use crate::parse;
 use crate::parse::ast::{ExpressionKind, ExpressionNode, StatementKind, StatementNode};
 
 fn eval_prefix_expression(operator: &Token, right: Object) -> Result<Object, String> {
-   match &operator.token_type {
-       TokenType::BANG => {
-         match right.get_type() {
-             ObjectType::Integer(i) => if i == 0 { Ok(TRUE) } else { Ok(FALSE) },
-             ObjectType::Boolean(b) => if b { Ok(FALSE) } else { Ok(TRUE) },
-             ObjectType::Null => Ok(TRUE)
-         }
-       },
-       _ => Err(format!("Cannot eval prefix from {}", operator))
-   }
+    match &operator.token_type {
+        TokenType::BANG => match right.get_type() {
+            ObjectType::Integer(i) => {
+                if i == 0 {
+                    Ok(TRUE)
+                } else {
+                    Ok(FALSE)
+                }
+            }
+            ObjectType::Boolean(b) => {
+                if b {
+                    Ok(FALSE)
+                } else {
+                    Ok(TRUE)
+                }
+            }
+            ObjectType::Null => Ok(TRUE),
+        },
+        TokenType::MINUS => match right.get_type() {
+            ObjectType::Integer(i) => Ok(Object::with_type(ObjectType::Integer(-i))),
+            _ => Err(format!(
+                "{:?} not supported on rhs of MINUS",
+                right.get_type()
+            )),
+        },
+        _ => Err(format!("Cannot eval prefix from {}", operator)),
+    }
 }
 
 pub fn eval_expression(expr: &ExpressionNode) -> Result<Object, String> {
@@ -27,11 +44,11 @@ pub fn eval_expression(expr: &ExpressionNode) -> Result<Object, String> {
             } else {
                 Ok(FALSE)
             }
-        },
+        }
         ExpressionKind::PrefixExpression { operator, right } => {
             let eval_r = eval_expression(&*right)?;
             eval_prefix_expression(&operator, eval_r)
-        },
+        }
         _ => Err(format!("Cannot eval '{:?}'", expr.kind)),
     }
 }
@@ -81,14 +98,6 @@ mod tests {
     }
 
     #[test]
-    fn test_eval_integer_expressions() {
-        let cases = vec![("5", 5), ("10", 10)];
-        for (expr, value) in cases {
-            check_integer_object(check_eval(expr).unwrap(), &value);
-        }
-    }
-
-    #[test]
     fn test_eval_boolean_literals() {
         let cases = vec![("true", true), ("false", false)];
         for (expr, value) in cases {
@@ -96,7 +105,29 @@ mod tests {
         }
     }
 
-    mod test_prefix_eval {
+    mod test_int {
+        use super::*;
+        macro_rules! int_tests {
+        ($($name:ident: $value:expr,)*) => {
+            $(
+                #[test]
+                fn $name() {
+                    let (input, expected) = $value;
+                    check_integer_object(check_eval(input).unwrap(), &expected);
+                })*
+
+        }
+    }
+
+        int_tests! {
+            five: ("5", 5),
+            ten: ("10", 10),
+            minusfive: ("-5", -5),
+            minusten: ("-10", -10),
+        }
+    }
+
+    mod test_bang {
         use super::*;
         macro_rules! bang_tests {
         ($($name:ident: $value:expr,)*) => {
