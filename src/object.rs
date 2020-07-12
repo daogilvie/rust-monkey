@@ -6,6 +6,7 @@ pub enum ObjectType {
 }
 
 /// Objects are the internal represenation of values in evaluation
+#[derive(Debug)]
 pub struct Object {
     o_type: ObjectType,
 }

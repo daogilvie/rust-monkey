@@ -2,7 +2,7 @@ use crate::object::{Object, ObjectType};
 use crate::parse;
 use crate::parse::ast::{ExpressionKind, ExpressionNode, StatementKind, StatementNode};
 
-fn eval_expression(expr: &ExpressionNode) -> Result<Object, String> {
+pub fn eval_expression(expr: &ExpressionNode) -> Result<Object, String> {
     match expr.kind {
         ExpressionKind::IntegerLiteral { value } => {
             Ok(Object::with_type(ObjectType::Integer(value)))
@@ -11,14 +11,14 @@ fn eval_expression(expr: &ExpressionNode) -> Result<Object, String> {
     }
 }
 
-fn eval_statement(statement: StatementNode) -> Result<Object, String> {
+pub fn eval_statement(statement: StatementNode) -> Result<Object, String> {
     match &statement.kind {
         StatementKind::Expression { expression } => eval_expression(expression),
         _ => Err(format!("Cannot eval statement kind {:?}", statement.kind)),
     }
 }
 
-fn eval_program(mut program: parse::ast::Program) -> Result<Object, String> {
+pub fn eval_program(mut program: parse::ast::Program) -> Result<Object, String> {
     // Right now we just parse the statement, this will obviously change.
     if let Some(stmt) = program.statements.pop() {
         eval_statement(stmt)

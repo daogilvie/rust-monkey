@@ -1,3 +1,4 @@
+use crate::eval;
 use crate::lex;
 use crate::parse;
 use std::io::{self, stdin, stdout, Write};
@@ -22,7 +23,12 @@ pub fn start(preamble: String) -> io::Result<()> {
         let mut parser = parse::Parser::for_lexer(lexer);
         let program = parser.parse();
         match program {
-            Ok(p) => print!("{}", p),
+            Ok(p) => {
+                match eval::eval_program(p) {
+                    Ok(r) => print!("{:?}", r),
+                    Err(e) => eprintln!("Eval Error: {}", e)
+                }
+            },
             Err(s) => {
                 eprintln!("{}", s);
                 for e in parser.get_errors() {
@@ -30,6 +36,7 @@ pub fn start(preamble: String) -> io::Result<()> {
                 }
             }
         }
+        println!("");
     }
     Ok(())
 }
