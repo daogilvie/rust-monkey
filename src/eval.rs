@@ -34,13 +34,16 @@ fn eval_prefix_expression(operator: &Token, right: Object) -> Result<Object, Str
 }
 
 fn eval_infix_expression(operator: &Token, left: Object, right: Object) -> Result<Object, String> {
-    // TODO: I'm sure there's a better way to do this
     match (left.get_type(), right.get_type()) {
         (ObjectType::Integer(int_l), ObjectType::Integer(int_r)) => match &operator.token_type {
             TokenType::PLUS => Ok(Object::with_type(ObjectType::Integer(int_l + int_r))),
             TokenType::MINUS => Ok(Object::with_type(ObjectType::Integer(int_l - int_r))),
             TokenType::ASTERISK => Ok(Object::with_type(ObjectType::Integer(int_l * int_r))),
             TokenType::SLASH => Ok(Object::with_type(ObjectType::Integer(int_l / int_r))),
+            TokenType::EQ => Ok(Object::with_type(ObjectType::Boolean(int_l == int_r))),
+            TokenType::NOTEQ => Ok(Object::with_type(ObjectType::Boolean(int_l != int_r))),
+            TokenType::LT => Ok(Object::with_type(ObjectType::Boolean(int_l < int_r))),
+            TokenType::GT => Ok(Object::with_type(ObjectType::Boolean(int_l > int_r))),
             _ => Err(format!(
                 "Cannot eval operator {} with integer operands",
                 operator
@@ -126,13 +129,37 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_eval_boolean_literals() {
-        let cases = vec![("true", true), ("false", false)];
-        for (expr, value) in cases {
-            check_boolean_object(check_eval(expr).unwrap(), &value);
+
+    mod test_bool {
+        use super::*;
+        macro_rules! bool_tests {
+        ($($name:ident: $value:expr,)*) => {
+            $(
+                #[test]
+                fn $name() {
+                    let (input, expected) = $value;
+                    check_boolean_object(check_eval(input).unwrap(), &expected);
+                })*
+
         }
     }
+
+        bool_tests! {
+            littrue: ("true", true),
+            litfalse: ("false", false),
+            onelttwo: ("1 < 2", true),
+            onegttwo: ("1 > 2", false),
+            oneltone: ("1 < 1", false),
+            onegtone: ("1 > 1", false),
+            oneeqone: ("1 == 1", true),
+            oneneqone: ("1 != 1", false),
+            oneeqtwo: ("1 == 2", false),
+            oneneqtwo: ("1 != 2", true),
+        }
+     
+
+    }
+
 
     mod test_int {
         use super::*;
