@@ -49,6 +49,14 @@ fn eval_infix_expression(operator: &Token, left: Object, right: Object) -> Resul
                 operator
             )),
         },
+        (ObjectType::Boolean(bool_l), ObjectType::Boolean(bool_r)) => match &operator.token_type {
+            TokenType::EQ => Ok(Object::with_type(ObjectType::Boolean(bool_l == bool_r))),
+            TokenType::NOTEQ => Ok(Object::with_type(ObjectType::Boolean(bool_l != bool_r))),
+            _ => Err(format!(
+                "Cannot eval operator {} with boolean operands",
+                operator
+            )),
+        }
         _ => Err(format!(
             "Cannot eval given {:?} {} {:?}",
             left, operator, right
@@ -155,6 +163,15 @@ mod tests {
             oneneqone: ("1 != 1", false),
             oneeqtwo: ("1 == 2", false),
             oneneqtwo: ("1 != 2", true),
+            trueeqtrue: ("true == true", true),
+            falseeqfalse: ("false == false", true),
+            trueeqfalse: ("true == false", false),
+            trueneqfalse: ("true != false", true),
+            falseneqtrue: ("false != true", true),
+            onelttwoeqtrue: ("(1 < 2) == true", true),
+            onelttwoeqfalse: ("(1 < 2) == false", false),
+            onegttwoeqtrue: ("(1 > 2) == true", false),
+            onegttwoeqfalse: ("(1 > 2) == false", true),
         }
      
 
