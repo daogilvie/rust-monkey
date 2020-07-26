@@ -25,7 +25,7 @@ pub fn start(preamble: String) -> io::Result<()> {
         match program {
             Ok(p) => {
                 match eval::eval_program(p) {
-                    Ok(r) => print!("{:?}", r),
+                    Ok(r) => print!("{}", r),
                     Err(e) => eprintln!("Eval Error: {}", e)
                 }
             },

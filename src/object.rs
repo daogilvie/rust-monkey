@@ -1,3 +1,5 @@
+use std::fmt;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ObjectType {
     Integer(i64),
@@ -11,13 +13,9 @@ pub struct Object {
     o_type: ObjectType,
 }
 
-
 impl Object {
-
     pub fn with_type(o_type: ObjectType) -> Self {
-        Self {
-            o_type
-        }
+        Self { o_type }
     }
 
     pub fn get_type(&self) -> ObjectType {
@@ -33,10 +31,22 @@ impl Object {
     }
 }
 
+impl fmt::Display for Object {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self.get_type() {
+            ObjectType::Null => f.write_str("null"),
+            ObjectType::Boolean(v) => write!(f, "{}", v),
+            ObjectType::Integer(v) => write!(f, "{}", v),
+        }
+    }
+}
+
 pub const TRUE: Object = Object {
-    o_type: ObjectType::Boolean(true)
+    o_type: ObjectType::Boolean(true),
 };
-pub const FALSE: Object = Object { 
-    o_type: ObjectType::Boolean(false)
+pub const FALSE: Object = Object {
+    o_type: ObjectType::Boolean(false),
 };
-pub const NULL: Object = Object { o_type: ObjectType::Null };
+pub const NULL: Object = Object {
+    o_type: ObjectType::Null,
+};
