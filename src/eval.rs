@@ -33,6 +33,26 @@ fn eval_prefix_expression(operator: &Token, right: Object) -> Result<Object, Str
     }
 }
 
+fn eval_infix_expression(operator: &Token, left: Object, right: Object) -> Result<Object, String> {
+    // TODO: I'm sure there's a better way to do this
+    match (left.get_type(), right.get_type()) {
+        (ObjectType::Integer(int_l), ObjectType::Integer(int_r)) => match &operator.token_type {
+            TokenType::PLUS => Ok(Object::with_type(ObjectType::Integer(int_l + int_r))),
+            TokenType::MINUS => Ok(Object::with_type(ObjectType::Integer(int_l - int_r))),
+            TokenType::ASTERISK => Ok(Object::with_type(ObjectType::Integer(int_l * int_r))),
+            TokenType::SLASH => Ok(Object::with_type(ObjectType::Integer(int_l / int_r))),
+            _ => Err(format!(
+                "Cannot eval operator {} with integer operands",
+                operator
+            )),
+        },
+        _ => Err(format!(
+            "Cannot eval given {:?} {} {:?}",
+            left, operator, right
+        )),
+    }
+}
+
 pub fn eval_expression(expr: &ExpressionNode) -> Result<Object, String> {
     match &expr.kind {
         ExpressionKind::IntegerLiteral { value } => {
@@ -48,6 +68,15 @@ pub fn eval_expression(expr: &ExpressionNode) -> Result<Object, String> {
         ExpressionKind::PrefixExpression { operator, right } => {
             let eval_r = eval_expression(&*right)?;
             eval_prefix_expression(&operator, eval_r)
+        }
+        ExpressionKind::InfixExpression {
+            left,
+            operator,
+            right,
+        } => {
+            let eval_l = eval_expression(&*left)?;
+            let eval_r = eval_expression(&*right)?;
+            eval_infix_expression(operator, eval_l, eval_r)
         }
         _ => Err(format!("Cannot eval '{:?}'", expr.kind)),
     }
@@ -124,6 +153,17 @@ mod tests {
             ten: ("10", 10),
             minusfive: ("-5", -5),
             minusten: ("-10", -10),
+            addsub: ("5 + 5 + 5 + 5 - 10 + 1", 11),
+            mult: ("2 * 2 * 2 * 2 * 2", 32),
+            addsubneg: ("-50 + 100 + -50", 0),
+            multadd: ("5 * 2 + 10", 20),
+            addmult: ("5 + 2 * 10", 25),
+            addmultneg: ("20 + 2 * -10", 0),
+            divmultadd: ("22 / 2 * 3 + 9", 42),
+            multbrack: ("3 * (9 + 1)", 30),
+            multmultadd: ("3 * 3 * 3 + 10", 37),
+            multbrackadd: ("3 * (3 * 3) + 10", 37),
+            bigbrack: ("(5 + 10 * 2 + 15 / 3) * 2 + -10", 50),
         }
     }
 
