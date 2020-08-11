@@ -3,6 +3,15 @@ use crate::object::*;
 use crate::parse;
 use crate::parse::ast::{ExpressionKind, ExpressionNode, StatementKind, StatementNode};
 
+/// Monkey evaluates positive numbers and true as truthy
+fn is_truthy(obj: &Object) -> bool {
+    match obj.get_type() {
+        ObjectType::Boolean(b) => return b,
+        ObjectType::Null => false,
+        ObjectType::Integer(i) => i > 0
+    }
+}
+
 fn eval_prefix_expression(operator: &Token, right: Object) -> Result<Object, String> {
     match &operator.token_type {
         TokenType::BANG => match right.get_type() {
@@ -33,7 +42,7 @@ fn eval_prefix_expression(operator: &Token, right: Object) -> Result<Object, Str
     }
 }
 
-fn eval_infix_expression(operator: &Token, left: Object, right: Object) -> Result<Object, String> {
+fn eval_infix_expression(operator: Token, left: Object, right: Object) -> Result<Object, String> {
     match (left.get_type(), right.get_type()) {
         (ObjectType::Integer(int_l), ObjectType::Integer(int_r)) => match &operator.token_type {
             TokenType::PLUS => Ok(Object::with_type(ObjectType::Integer(int_l + int_r))),
@@ -56,7 +65,7 @@ fn eval_infix_expression(operator: &Token, left: Object, right: Object) -> Resul
                 "Cannot eval operator {} with boolean operands",
                 operator
             )),
-        }
+        },
         _ => Err(format!(
             "Cannot eval given {:?} {} {:?}",
             left, operator, right
@@ -64,20 +73,20 @@ fn eval_infix_expression(operator: &Token, left: Object, right: Object) -> Resul
     }
 }
 
-pub fn eval_expression(expr: &ExpressionNode) -> Result<Object, String> {
-    match &expr.kind {
+pub fn eval_expression(expr: ExpressionNode) -> Result<Object, String> {
+    match expr.kind {
         ExpressionKind::IntegerLiteral { value } => {
-            Ok(Object::with_type(ObjectType::Integer(*value)))
+            Ok(Object::with_type(ObjectType::Integer(value)))
         }
         ExpressionKind::BooleanLiteral { value } => {
-            if *value {
+            if value {
                 Ok(TRUE)
             } else {
                 Ok(FALSE)
             }
         }
         ExpressionKind::PrefixExpression { operator, right } => {
-            let eval_r = eval_expression(&*right)?;
+            let eval_r = eval_expression(*right)?;
             eval_prefix_expression(&operator, eval_r)
         }
         ExpressionKind::InfixExpression {
@@ -85,17 +94,34 @@ pub fn eval_expression(expr: &ExpressionNode) -> Result<Object, String> {
             operator,
             right,
         } => {
-            let eval_l = eval_expression(&*left)?;
-            let eval_r = eval_expression(&*right)?;
+            let eval_l = eval_expression(*left)?;
+            let eval_r = eval_expression(*right)?;
             eval_infix_expression(operator, eval_l, eval_r)
+        },
+        ExpressionKind::IfConditional { condition, consequence, alternative } => {
+            let eval_c = eval_expression(*condition)?; 
+            if is_truthy(&eval_c) {
+                eval_statement(*consequence)
+            } else if let Some(alt) = alternative {
+                eval_statement(*alt)
+            } else {
+                Ok(Object::with_type(ObjectType::Null))
+            }
         }
         _ => Err(format!("Cannot eval '{:?}'", expr.kind)),
     }
 }
 
 pub fn eval_statement(statement: StatementNode) -> Result<Object, String> {
-    match &statement.kind {
+    match statement.kind {
         StatementKind::Expression { expression } => eval_expression(expression),
+        StatementKind::BlockStatement { mut statements } => {
+            if let Some(stmt) = statements.pop() {
+                eval_statement(stmt)
+            } else {
+                Ok(Object::with_type(ObjectType::Null))
+            }
+        }
         _ => Err(format!("Cannot eval statement kind {:?}", statement.kind)),
     }
 }
@@ -121,11 +147,22 @@ mod tests {
         eval_program(prog)
     }
 
-    fn check_integer_object(obj: Object, expected: &i64) {
-        if let ObjectType::Integer(i) = obj.get_type() {
-            assert_eq!(&i, expected)
-        } else {
-            assert!(false, "object was not integer type")
+    fn check_integer_object(obj: Object, expected: Option<i64>) {
+        match obj.get_type() {
+            ObjectType::Integer(i) => {
+                if let Some(exp) = expected {
+                    assert_eq!(&i, &exp)
+                } else {
+                    assert!(false, "Expected NULL, got {}", i)
+                }
+            }
+            ObjectType::Null => {
+                match expected {
+                    Some(i) => assert!(false, "Expected {}, got NULL", i),
+                    None => assert!(true)
+                }
+            }
+            _ => assert!(false, "object was not integer type"),
         }
     }
 
@@ -136,7 +173,6 @@ mod tests {
             assert!(false, "object was not boolean type");
         }
     }
-
 
     mod test_bool {
         use super::*;
@@ -173,10 +209,7 @@ mod tests {
             onegttwoeqtrue: ("(1 > 2) == true", false),
             onegttwoeqfalse: ("(1 > 2) == false", true),
         }
-     
-
     }
-
 
     mod test_int {
         use super::*;
@@ -186,7 +219,7 @@ mod tests {
                 #[test]
                 fn $name() {
                     let (input, expected) = $value;
-                    check_integer_object(check_eval(input).unwrap(), &expected);
+                    check_integer_object(check_eval(input).unwrap(), Some(expected));
                 })*
 
         }
@@ -232,6 +265,32 @@ mod tests {
             bangbangtrue: ("!!true", true),
             bangbangfalse: ("!!false", false),
             bangbangfive: ("!!5", true),
+        }
+    }
+
+    mod test_conditional {
+        use super::*;
+
+        macro_rules! cond_tests {
+        ($($name:ident: $value:expr,)*) => {
+            $(
+                #[test]
+                fn $name() {
+                    let (input, expected) = $value;
+                    check_integer_object(check_eval(input).unwrap(), expected);
+                })*
+
+        }
+    }
+
+        cond_tests! {
+            iftrue: ("if (true) { 10 }", Some(10)),
+            iffalse: ("if (false) { 10 }", None),
+            ifone: ("if (1) { 10 }", Some(10)),
+            ifonelttwo: ("if (1<2) { 10 }", Some(10)),
+            ifonegttwo: ("if (1>2) { 10 }", None),
+            ifelseonegttwo: ("if (1>2) { 10 } else { 20 }", Some(20)),
+            ifelseonelttwo: ("if (1<2) { 10 } else { 20 }", Some(10)),
         }
     }
 }
