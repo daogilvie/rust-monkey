@@ -7,6 +7,15 @@ pub enum ObjectType {
     Null,
 }
 
+impl fmt::Display for ObjectType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ObjectType::Null => f.write_str("NULL"),
+            ObjectType::Boolean(_v) => write!(f, "BOOLEAN"),
+            ObjectType::Integer(_v) => write!(f, "INTEGER"),
+        }
+    }
+}
 /// Objects are the internal represenation of values in evaluation
 #[derive(Debug)]
 pub struct Object {

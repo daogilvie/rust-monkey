@@ -52,7 +52,7 @@ fn eval_prefix_expression(operator: &Token, right: Object) -> Result<Object, Str
         TokenType::MINUS => match right.get_type() {
             ObjectType::Integer(i) => Ok(Object::with_type(ObjectType::Integer(-i))),
             _ => Err(format!(
-                "{:?} not supported on rhs of MINUS",
+                "undefined prefix operation: -{}",
                 right.get_type()
             )),
         },
@@ -80,13 +80,13 @@ fn eval_infix_expression(operator: Token, left: Object, right: Object) -> Result
             TokenType::EQ => Ok(Object::with_type(ObjectType::Boolean(bool_l == bool_r))),
             TokenType::NOTEQ => Ok(Object::with_type(ObjectType::Boolean(bool_l != bool_r))),
             _ => Err(format!(
-                "Cannot eval operator {} with boolean operands",
-                operator
+                "undefined operation: BOOLEAN {} BOOLEAN",
+                operator.get_literal().unwrap()
             )),
         },
         _ => Err(format!(
-            "Cannot eval given {:?} {} {:?}",
-            left, operator, right
+            "type mismatch: {} {} {}",
+            left.get_type(), operator.get_literal().unwrap(), right.get_type()
         )),
     }
 }
@@ -365,6 +365,40 @@ mod tests {
             ret2x5not9: ("return 2*5; 9;", Some(10)),
             ret2x5not9or9: ("9; return 2*5; 9;", Some(10)),
             nested: ("if(10>1) { if (10>1) { return 10; } } return 9;", Some(10)),
+        }
+    }
+
+    mod test_errors {
+        use super::*;
+
+        #[allow(unused)]
+        fn check_error_output(result: Result<Object, String>, expected: &str) {
+            if let Err(s) = result {
+                assert_eq!(s, expected)
+            } else {
+                assert!(false, "Expecting error, but got result")
+            }
+        }
+
+        macro_rules! error_tests {
+        ($($name:ident: $value:expr,)*) => {
+            $(
+                #[test]
+                fn $name() {
+                    let (input, expected) = $value;
+                    check_error_output(check_eval(input), expected);
+                })*
+
+        }
+    }
+        error_tests! {
+            intaddbool: ("5+true;", "type mismatch: INTEGER + BOOLEAN"),
+            intaddboolfirst: ("5+true; return 9;", "type mismatch: INTEGER + BOOLEAN"),
+            minusbool: ("-true", "undefined prefix operation: -BOOLEAN"),
+            boolplusbool: ("true+false", "undefined operation: BOOLEAN + BOOLEAN"),
+            boolplusboolfirst: ("true+false; return 10;", "undefined operation: BOOLEAN + BOOLEAN"),
+            boolplusboolcond: ("if (10 > 1) {true+false}; return 10;", "undefined operation: BOOLEAN + BOOLEAN"),
+            boolplusboolnestedcond: ("if (20 > 10) { if (10 > 1) {true+false}}; return 10;", "undefined operation: BOOLEAN + BOOLEAN"),
         }
     }
 }
