@@ -3,12 +3,30 @@ use crate::object::*;
 use crate::parse;
 use crate::parse::ast::{ExpressionKind, ExpressionNode, StatementKind, StatementNode};
 
+struct EvalResult {
+    pub result: Object,
+    pub is_return: bool,
+}
+
+impl EvalResult {
+    fn with_object_and_return(result: Object, is_return: bool) -> Self {
+        Self { result, is_return }
+    }
+
+    fn with_object(result: Object) -> Self {
+        Self {
+            result,
+            is_return: false,
+        }
+    }
+}
+
 /// Monkey evaluates positive numbers and true as truthy
 fn is_truthy(obj: &Object) -> bool {
     match obj.get_type() {
         ObjectType::Boolean(b) => return b,
         ObjectType::Null => false,
-        ObjectType::Integer(i) => i > 0
+        ObjectType::Integer(i) => i > 0,
     }
 }
 
@@ -73,21 +91,24 @@ fn eval_infix_expression(operator: Token, left: Object, right: Object) -> Result
     }
 }
 
-pub fn eval_expression(expr: ExpressionNode) -> Result<Object, String> {
+fn eval_expression(expr: ExpressionNode) -> Result<EvalResult, String> {
     match expr.kind {
-        ExpressionKind::IntegerLiteral { value } => {
-            Ok(Object::with_type(ObjectType::Integer(value)))
-        }
+        ExpressionKind::IntegerLiteral { value } => Ok(EvalResult::with_object(Object::with_type(
+            ObjectType::Integer(value),
+        ))),
         ExpressionKind::BooleanLiteral { value } => {
             if value {
-                Ok(TRUE)
+                Ok(EvalResult::with_object(TRUE))
             } else {
-                Ok(FALSE)
+                Ok(EvalResult::with_object(FALSE))
             }
         }
         ExpressionKind::PrefixExpression { operator, right } => {
             let eval_r = eval_expression(*right)?;
-            eval_prefix_expression(&operator, eval_r)
+            Ok(EvalResult::with_object(eval_prefix_expression(
+                &operator,
+                eval_r.result,
+            )?))
         }
         ExpressionKind::InfixExpression {
             left,
@@ -96,43 +117,74 @@ pub fn eval_expression(expr: ExpressionNode) -> Result<Object, String> {
         } => {
             let eval_l = eval_expression(*left)?;
             let eval_r = eval_expression(*right)?;
-            eval_infix_expression(operator, eval_l, eval_r)
-        },
-        ExpressionKind::IfConditional { condition, consequence, alternative } => {
-            let eval_c = eval_expression(*condition)?; 
-            if is_truthy(&eval_c) {
+            Ok(EvalResult::with_object(eval_infix_expression(
+                operator,
+                eval_l.result,
+                eval_r.result,
+            )?))
+        }
+        ExpressionKind::IfConditional {
+            condition,
+            consequence,
+            alternative,
+        } => {
+            let eval_c = eval_expression(*condition)?;
+            if is_truthy(&eval_c.result) {
                 eval_statement(*consequence)
             } else if let Some(alt) = alternative {
                 eval_statement(*alt)
             } else {
-                Ok(Object::with_type(ObjectType::Null))
+                Ok(EvalResult::with_object(Object::with_type(ObjectType::Null)))
             }
         }
         _ => Err(format!("Cannot eval '{:?}'", expr.kind)),
     }
 }
 
-pub fn eval_statement(statement: StatementNode) -> Result<Object, String> {
+fn eval_statement(statement: StatementNode) -> Result<EvalResult, String> {
     match statement.kind {
         StatementKind::Expression { expression } => eval_expression(expression),
-        StatementKind::BlockStatement { mut statements } => {
-            if let Some(stmt) = statements.pop() {
-                eval_statement(stmt)
-            } else {
-                Ok(Object::with_type(ObjectType::Null))
+        StatementKind::BlockStatement { statements } => {
+            let mut result: Result<EvalResult, String> = Ok(EvalResult::with_object_and_return(
+                Object::with_type(ObjectType::Null),
+                false,
+            ));
+            for statement in statements {
+                let inner_result = eval_statement(statement)?;
+                let returning = inner_result.is_return;
+                result = Ok(inner_result);
+                if returning {
+                    break;
+                }
             }
+            result
+        }
+        StatementKind::Return { value } => {
+            let mut r = eval_expression(value)?;
+            r.is_return = true;
+            Ok(r)
         }
         _ => Err(format!("Cannot eval statement kind {:?}", statement.kind)),
     }
 }
 
-pub fn eval_program(mut program: parse::ast::Program) -> Result<Object, String> {
-    // Right now we just parse the statement, this will obviously change.
-    if let Some(stmt) = program.statements.pop() {
-        eval_statement(stmt)
-    } else {
-        Err(String::from("Your program has no statements"))
+pub fn eval_program(program: parse::ast::Program) -> Result<Object, String> {
+    let mut result = Ok(Object::with_type(ObjectType::Null));
+    for statement in program.statements {
+        let inner_result = eval_statement(statement)?;
+        let returning = inner_result.is_return;
+        result = Ok(inner_result.result);
+        if returning {
+            break;
+        }
     }
+    result
+
+    // if let Some(stmt) = program.statements.pop() {
+    // eval_statement(stmt)
+    // } else {
+    // Err(String::from("Your program has no statements"))
+    // }
 }
 
 #[cfg(test)]
@@ -156,12 +208,10 @@ mod tests {
                     assert!(false, "Expected NULL, got {}", i)
                 }
             }
-            ObjectType::Null => {
-                match expected {
-                    Some(i) => assert!(false, "Expected {}, got NULL", i),
-                    None => assert!(true)
-                }
-            }
+            ObjectType::Null => match expected {
+                Some(i) => assert!(false, "Expected {}, got NULL", i),
+                None => assert!(true),
+            },
             _ => assert!(false, "object was not integer type"),
         }
     }
@@ -291,6 +341,30 @@ mod tests {
             ifonegttwo: ("if (1>2) { 10 }", None),
             ifelseonegttwo: ("if (1>2) { 10 } else { 20 }", Some(20)),
             ifelseonelttwo: ("if (1<2) { 10 } else { 20 }", Some(10)),
+        }
+    }
+
+    mod test_returns {
+        use super::*;
+
+        macro_rules! return_tests {
+        ($($name:ident: $value:expr,)*) => {
+            $(
+                #[test]
+                fn $name() {
+                    let (input, expected) = $value;
+                    check_integer_object(check_eval(input).unwrap(), expected);
+                })*
+
+        }
+    }
+
+        return_tests! {
+            ret10: ("return 10", Some(10)),
+            ret10not9: ("return 10; 9;", Some(10)),
+            ret2x5not9: ("return 2*5; 9;", Some(10)),
+            ret2x5not9or9: ("9; return 2*5; 9;", Some(10)),
+            nested: ("if(10>1) { if (10>1) { return 10; } } return 9;", Some(10)),
         }
     }
 }
