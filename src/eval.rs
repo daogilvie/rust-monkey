@@ -51,10 +51,7 @@ fn eval_prefix_expression(operator: &Token, right: Object) -> Result<Object, Str
         },
         TokenType::MINUS => match right.get_type() {
             ObjectType::Integer(i) => Ok(Object::with_type(ObjectType::Integer(-i))),
-            _ => Err(format!(
-                "undefined prefix operation: -{}",
-                right.get_type()
-            )),
+            _ => Err(format!("undefined prefix operation: -{}", right.get_type())),
         },
         _ => Err(format!("Cannot eval prefix from {}", operator)),
     }
@@ -86,7 +83,9 @@ fn eval_infix_expression(operator: Token, left: Object, right: Object) -> Result
         },
         _ => Err(format!(
             "type mismatch: {} {} {}",
-            left.get_type(), operator.get_literal().unwrap(), right.get_type()
+            left.get_type(),
+            operator.get_literal().unwrap(),
+            right.get_type()
         )),
     }
 }
