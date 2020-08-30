@@ -2,6 +2,8 @@ use crate::lex::{Token, TokenType};
 use crate::object::*;
 use crate::parse;
 use crate::parse::ast::{ExpressionKind, ExpressionNode, StatementKind, StatementNode};
+use std::cell::UnsafeCell;
+use std::collections::HashMap;
 
 struct EvalResult {
     pub result: Object,
@@ -21,6 +23,39 @@ impl EvalResult {
     }
 }
 
+pub struct Environment {
+    identifiers: UnsafeCell<HashMap<String, Object>>,
+}
+
+impl Environment {
+    pub fn new() -> Self {
+        Self {
+            identifiers: UnsafeCell::new(HashMap::new()),
+        }
+    }
+
+    fn upsert_ident(&self, ident: String, value: Object) {
+        // SAFETY: I know that no interior member of the hashmap has given
+        // out an external reference, and that only one update can be happening
+        // at a time as UnsafeCell ==> !Sync
+        unsafe {
+            let map = &mut *self.identifiers.get();
+            map.insert(ident, value);
+        }
+    }
+
+    fn get_current_value(&self, ident: &String) -> Option<Object> {
+        // SAFETY: We clone on output here so that the unsafe insert can be done
+        // above. We know that no other thread is accessing this.
+        let o = unsafe { (&*self.identifiers.get()).get(ident) };
+        if o.is_some() {
+            Some(o.unwrap().clone())
+        } else {
+            None
+        }
+    }
+}
+
 /// Monkey evaluates positive numbers and true as truthy
 fn is_truthy(obj: &Object) -> bool {
     match obj.get_type() {
@@ -32,28 +67,25 @@ fn is_truthy(obj: &Object) -> bool {
 
 fn eval_prefix_expression(operator: &Token, right: Object) -> Result<Object, String> {
     match &operator.token_type {
-        TokenType::BANG => match right.get_type() {
-            ObjectType::Integer(i) => {
-                if i == 0 {
-                    Ok(TRUE)
-                } else {
-                    Ok(FALSE)
-                }
+        TokenType::BANG => {
+            if is_truthy(&right) {
+                Ok(FALSE)
+            } else {
+                Ok(TRUE)
             }
-            ObjectType::Boolean(b) => {
-                if b {
-                    Ok(FALSE)
-                } else {
-                    Ok(TRUE)
-                }
-            }
-            ObjectType::Null => Ok(TRUE),
-        },
+        }
         TokenType::MINUS => match right.get_type() {
             ObjectType::Integer(i) => Ok(Object::with_type(ObjectType::Integer(-i))),
             _ => Err(format!("undefined prefix operation: -{}", right.get_type())),
         },
         _ => Err(format!("Cannot eval prefix from {}", operator)),
+    }
+}
+
+fn eval_identifier(ident: String, environment: &Environment) -> Result<Object, String> {
+    match environment.get_current_value(&ident) {
+        Some(o) => Ok(o),
+        None => Err(format!("undefined identifier: {}", ident)),
     }
 }
 
@@ -90,7 +122,7 @@ fn eval_infix_expression(operator: Token, left: Object, right: Object) -> Result
     }
 }
 
-fn eval_expression(expr: ExpressionNode) -> Result<EvalResult, String> {
+fn eval_expression(expr: ExpressionNode, environment: &Environment) -> Result<EvalResult, String> {
     match expr.kind {
         ExpressionKind::IntegerLiteral { value } => Ok(EvalResult::with_object(Object::with_type(
             ObjectType::Integer(value),
@@ -103,7 +135,7 @@ fn eval_expression(expr: ExpressionNode) -> Result<EvalResult, String> {
             }
         }
         ExpressionKind::PrefixExpression { operator, right } => {
-            let eval_r = eval_expression(*right)?;
+            let eval_r = eval_expression(*right, environment)?;
             Ok(EvalResult::with_object(eval_prefix_expression(
                 &operator,
                 eval_r.result,
@@ -114,8 +146,8 @@ fn eval_expression(expr: ExpressionNode) -> Result<EvalResult, String> {
             operator,
             right,
         } => {
-            let eval_l = eval_expression(*left)?;
-            let eval_r = eval_expression(*right)?;
+            let eval_l = eval_expression(*left, environment)?;
+            let eval_r = eval_expression(*right, environment)?;
             Ok(EvalResult::with_object(eval_infix_expression(
                 operator,
                 eval_l.result,
@@ -127,29 +159,35 @@ fn eval_expression(expr: ExpressionNode) -> Result<EvalResult, String> {
             consequence,
             alternative,
         } => {
-            let eval_c = eval_expression(*condition)?;
+            let eval_c = eval_expression(*condition, environment)?;
             if is_truthy(&eval_c.result) {
-                eval_statement(*consequence)
+                eval_statement(*consequence, environment)
             } else if let Some(alt) = alternative {
-                eval_statement(*alt)
+                eval_statement(*alt, environment)
             } else {
                 Ok(EvalResult::with_object(Object::with_type(ObjectType::Null)))
             }
+        }
+        ExpressionKind::Identifier { name } => {
+            Ok(EvalResult::with_object(eval_identifier(name, environment)?))
         }
         _ => Err(format!("Cannot eval '{:?}'", expr.kind)),
     }
 }
 
-fn eval_statement(statement: StatementNode) -> Result<EvalResult, String> {
+fn eval_statement(
+    statement: StatementNode,
+    environment: &Environment,
+) -> Result<EvalResult, String> {
     match statement.kind {
-        StatementKind::Expression { expression } => eval_expression(expression),
+        StatementKind::Expression { expression } => eval_expression(expression, environment),
         StatementKind::BlockStatement { statements } => {
             let mut result: Result<EvalResult, String> = Ok(EvalResult::with_object_and_return(
                 Object::with_type(ObjectType::Null),
                 false,
             ));
             for statement in statements {
-                let inner_result = eval_statement(statement)?;
+                let inner_result = eval_statement(statement, environment)?;
                 let returning = inner_result.is_return;
                 result = Ok(inner_result);
                 if returning {
@@ -159,18 +197,29 @@ fn eval_statement(statement: StatementNode) -> Result<EvalResult, String> {
             result
         }
         StatementKind::Return { value } => {
-            let mut r = eval_expression(value)?;
+            let mut r = eval_expression(value, environment)?;
             r.is_return = true;
             Ok(r)
         }
-        _ => Err(format!("Cannot eval statement kind {:?}", statement.kind)),
+        StatementKind::Let { name, value } => {
+            if let ExpressionKind::Identifier { name } = &name.kind {
+                let v = eval_expression(value, environment)?;
+                environment.upsert_ident(name.clone(), v.result.clone());
+                Ok(EvalResult::with_object(v.result))
+            } else {
+                Err(format!("Trying to assign to {:?} expression", name.kind))
+            }
+        }
     }
 }
 
-pub fn eval_program(program: parse::ast::Program) -> Result<Object, String> {
-    let mut result = Ok(Object::with_type(ObjectType::Null));
+fn eval_program_with_env(
+    program: parse::ast::Program,
+    environment: &Environment,
+) -> Result<Object, String> {
+    let mut result = Ok(NULL);
     for statement in program.statements {
-        let inner_result = eval_statement(statement)?;
+        let inner_result = eval_statement(statement, environment)?;
         let returning = inner_result.is_return;
         result = Ok(inner_result.result);
         if returning {
@@ -178,12 +227,18 @@ pub fn eval_program(program: parse::ast::Program) -> Result<Object, String> {
         }
     }
     result
+}
 
-    // if let Some(stmt) = program.statements.pop() {
-    // eval_statement(stmt)
-    // } else {
-    // Err(String::from("Your program has no statements"))
-    // }
+pub fn eval_program(
+    program: parse::ast::Program,
+    environment: Option<&Environment>,
+) -> Result<Object, String> {
+    if let Some(e) = environment {
+        eval_program_with_env(program, e)
+    } else {
+        let env = Environment::new();
+        eval_program_with_env(program, &env)
+    }
 }
 
 #[cfg(test)]
@@ -195,7 +250,7 @@ mod tests {
         let l = lex::Lexer::for_str(input);
         let mut p = parse::Parser::for_lexer(l);
         let prog = p.parse()?;
-        eval_program(prog)
+        eval_program(prog, None)
     }
 
     fn check_integer_object(obj: Object, expected: Option<i64>) {
@@ -398,6 +453,29 @@ mod tests {
             boolplusboolfirst: ("true+false; return 10;", "undefined operation: BOOLEAN + BOOLEAN"),
             boolplusboolcond: ("if (10 > 1) {true+false}; return 10;", "undefined operation: BOOLEAN + BOOLEAN"),
             boolplusboolnestedcond: ("if (20 > 10) { if (10 > 1) {true+false}}; return 10;", "undefined operation: BOOLEAN + BOOLEAN"),
+            undefinedident: ("foobar", "undefined identifier: foobar"),
+        }
+    }
+
+    mod test_let {
+        use super::*;
+
+        macro_rules! error_tests {
+        ($($name:ident: $value:expr,)*) => {
+            $(
+                #[test]
+                fn $name() {
+                    let (input, expected) = $value;
+                    check_integer_object(check_eval(input).unwrap(), expected);
+                })*
+
+        }
+    }
+        error_tests! {
+            assignfive: ("let a = 5; a;", Some(5)),
+            assignfivexfive: ("let a = 5 * 5; a;", Some(25)),
+            assignbtoa: ("let a = 6; let b = a; b;", Some(6)),
+            assignexpr: ("let a = 5; let b = a; let c = a + b + 5; c;", Some(15)),
         }
     }
 }

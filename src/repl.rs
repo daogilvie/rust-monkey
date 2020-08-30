@@ -8,6 +8,7 @@ const PROMPT: &str = ">> ";
 pub fn start(preamble: String) -> io::Result<()> {
     let stdin = stdin();
     let mut out = stdout();
+    let env = eval::Environment::new();
     writeln!(out, "{}", preamble).expect("Error writing to stdout");
     loop {
         let mut input_buffer = String::new();
@@ -24,7 +25,7 @@ pub fn start(preamble: String) -> io::Result<()> {
         let program = parser.parse();
         match program {
             Ok(p) => {
-                match eval::eval_program(p) {
+                match eval::eval_program(p, Some(&env)) {
                     Ok(r) => print!("{}", r),
                     Err(e) => eprintln!("Eval Error: {}", e)
                 }

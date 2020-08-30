@@ -1,6 +1,6 @@
 use std::fmt;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ObjectType {
     Integer(i64),
     Boolean(bool),
@@ -17,7 +17,7 @@ impl fmt::Display for ObjectType {
     }
 }
 /// Objects are the internal represenation of values in evaluation
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Object {
     o_type: ObjectType,
 }
@@ -28,15 +28,7 @@ impl Object {
     }
 
     pub fn get_type(&self) -> ObjectType {
-        self.o_type
-    }
-
-    pub fn inspect(&self) -> String {
-        match &self.o_type {
-            ObjectType::Integer(v) => format!("{}", v),
-            ObjectType::Boolean(b) => format!("{}", b),
-            ObjectType::Null => String::from("null"),
-        }
+        self.o_type.clone()
     }
 }
 
@@ -56,6 +48,7 @@ pub const TRUE: Object = Object {
 pub const FALSE: Object = Object {
     o_type: ObjectType::Boolean(false),
 };
+
 pub const NULL: Object = Object {
     o_type: ObjectType::Null,
 };
