@@ -71,27 +71,15 @@ impl fmt::Display for TokenType {
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub struct Token {
+#[derive(Debug, Clone, PartialEq)]
+pub struct Token<'literal> {
     pub token_type: TokenType,
-    literal: Option<String>,
+    literal: Option<&'literal str>,
 }
 
-impl Clone for Token {
-    fn clone(&self) -> Token {
-        match &self.literal {
-            Some(s) => Token::with_string(self.token_type, String::from(s)),
-            None => Token {
-                token_type: self.token_type,
-                literal: None,
-            },
-        }
-    }
-}
-
-impl fmt::Display for Token {
+impl<'literal> fmt::Display for Token<'literal> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let lit_string = match self.get_literal() {
+        let lit_string = match self.literal {
             None => "N/A",
             Some(s) => s,
         };
@@ -99,32 +87,24 @@ impl fmt::Display for Token {
     }
 }
 
-impl Token {
-    pub fn with_str(token_type: TokenType, lit: &str) -> Token {
+impl<'literal> Token<'literal> {
+    pub fn with_str<'a>(token_type: TokenType, lit: &'a str) -> Token {
         Token {
             token_type,
-            literal: Some(String::from(lit)),
+            literal: Some(lit),
         }
     }
 
-    pub fn with_string(token_type: TokenType, string: String) -> Token {
-        Token {
-            token_type,
-            literal: Some(string)
-        }
-    }
-
-    pub fn get_literal(&self) -> Option<&String> {
-        match &self.literal {
-            Some(s) => Some(&s),
-            None => None,
-        }
+    pub fn get_literal(&self) -> Option<&str> {
+        self.literal
     }
 }
 
 pub struct Lexer<'a> {
+    input: &'a str,
     input_iter: Peekable<Chars<'a>>,
     completed: bool,
+    position: usize,
 }
 
 impl<'a> Lexer<'a> {
@@ -132,12 +112,14 @@ impl<'a> Lexer<'a> {
         let mut input_iter = input.chars().peekable();
         let completed = input_iter.peek().is_none();
         Lexer {
+            input,
             input_iter,
             completed,
+            position: 0,
         }
     }
 
-    pub fn next_token(&mut self) -> Result<Token, &'static str> {
+    pub fn next_token(&mut self) -> Result<Token<'a>, &'static str> {
         if self.completed {
             return Ok(Token {
                 token_type: TokenType::EOF,
@@ -145,6 +127,7 @@ impl<'a> Lexer<'a> {
             });
         }
         self.skip_whitespace();
+        let start = self.position;
 
         match self.read_char() {
             None => {
@@ -155,74 +138,72 @@ impl<'a> Lexer<'a> {
                 })
             }
             Some(ch) => {
-                let mut lit = String::with_capacity(1);
-                lit.push(ch);
-                let literal = Some(lit);
+                let likely_literal = self.input.get(start..self.position);
                 match ch {
-                    '=' => Ok(self.check_multichar_eq(literal)),
+                    '=' => Ok(self.check_multichar_eq()),
                     '+' => Ok(Token {
                         token_type: TokenType::PLUS,
-                        literal,
+                        literal: likely_literal,
                     }),
                     '-' => Ok(Token {
                         token_type: TokenType::MINUS,
-                        literal,
+                        literal: likely_literal,
                     }),
-                    '!' => Ok(self.check_multichar_bang(literal)),
+                    '!' => Ok(self.check_multichar_bang()),
                     '*' => Ok(Token {
                         token_type: TokenType::ASTERISK,
-                        literal,
+                        literal: likely_literal,
                     }),
                     '/' => Ok(Token {
                         token_type: TokenType::SLASH,
-                        literal,
+                        literal: likely_literal,
                     }),
                     '<' => Ok(Token {
                         token_type: TokenType::LT,
-                        literal,
+                        literal: likely_literal,
                     }),
                     '>' => Ok(Token {
                         token_type: TokenType::GT,
-                        literal,
+                        literal: likely_literal,
                     }),
                     '(' => Ok(Token {
                         token_type: TokenType::LPAREN,
-                        literal,
+                        literal: likely_literal,
                     }),
                     ')' => Ok(Token {
                         token_type: TokenType::RPAREN,
-                        literal,
+                        literal: likely_literal,
                     }),
                     '{' => Ok(Token {
                         token_type: TokenType::LBRACE,
-                        literal,
+                        literal: likely_literal,
                     }),
                     '}' => Ok(Token {
                         token_type: TokenType::RBRACE,
-                        literal,
+                        literal: likely_literal,
                     }),
                     ',' => Ok(Token {
                         token_type: TokenType::COMMA,
-                        literal,
+                        literal: likely_literal,
                     }),
                     ';' => Ok(Token {
                         token_type: TokenType::SEMICOLON,
-                        literal,
+                        literal: likely_literal,
                     }),
-                    l if l.is_alphabetic() => match self.read_ident(ch) {
+                    l if l.is_alphabetic() => match self.read_ident(start) {
                         Some(ident) => Ok(Token {
-                            token_type: Lexer::get_ident_tokentype(&ident),
+                            token_type: Lexer::get_ident_tokentype(ident),
                             literal: Some(ident),
                         }),
                         None => Err("cannot read ident"),
                     },
                     d if d.is_digit(10) => Ok(Token {
                         token_type: TokenType::INT,
-                        literal: self.read_int(ch, 10),
+                        literal: self.read_int(start, 10),
                     }),
                     _ => Ok(Token {
                         token_type: TokenType::ILLEGAL,
-                        literal,
+                        literal: likely_literal,
                     }),
                 }
             }
@@ -244,61 +225,49 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn check_multichar_eq(&mut self, literal: Option<String>) -> Token {
-        let next_char = self.peek_char();
-        match next_char {
-            Some(c) => match c {
-                '=' => {
-                    self.read_char();
-                    Token::with_str(TokenType::EQ, "==")
-                }
-                _ => Token {
-                    token_type: TokenType::ASSIGN,
-                    literal,
-                },
-            },
-            _ => Token {
-                token_type: TokenType::ASSIGN,
-                literal,
-            },
+    fn check_multichar_eq(&mut self) -> Token<'a> {
+        let start = self.position - 1;
+        let mut toktype = TokenType::ASSIGN;
+        if let Some(c) = self.peek_char() {
+            if *c == '=' {
+                self.read_char();
+                toktype = TokenType::EQ;
+            }
+        }
+        Token {
+            token_type: toktype,
+            literal: self.input.get(start..self.position),
         }
     }
 
-    fn check_multichar_bang(&mut self, literal: Option<String>) -> Token {
-        let next_char = self.peek_char();
-        match next_char {
-            Some(c) => match c {
-                '=' => {
-                    self.read_char();
-                    Token::with_str(TokenType::NOTEQ, "!=")
-                }
-                _ => Token {
-                    token_type: TokenType::BANG,
-                    literal,
-                },
-            },
-            _ => Token {
-                token_type: TokenType::BANG,
-                literal,
-            },
+    fn check_multichar_bang(&mut self) -> Token<'a> {
+        let start = self.position - 1;
+        let mut toktype = TokenType::BANG;
+        if let Some(c) = self.peek_char() {
+            if *c == '=' {
+                self.read_char();
+                toktype = TokenType::NOTEQ;
+            }
+        }
+        Token {
+            token_type: toktype,
+            literal: self.input.get(start..self.position),
         }
     }
 
-    fn read_ident(&mut self, prefix: char) -> Option<String> {
-        let mut ident = String::from("");
-        ident.push(prefix);
+    fn read_ident(&mut self, start: usize) -> Option<&'a str> {
         while let Some(&chr) = self.peek_char() {
             if chr.is_alphabetic() {
-                ident.push(self.read_char()?);
+                self.read_char()?;
             } else {
                 break;
             }
         }
-        Some(ident)
+        self.input.get(start..self.position)
     }
 
-    fn get_ident_tokentype(ident: &String) -> TokenType {
-        match ident.as_str() {
+    fn get_ident_tokentype(ident: &str) -> TokenType {
+        match ident {
             "let" => TokenType::LET,
             "fn" => TokenType::FUNCTION,
             "if" => TokenType::IF,
@@ -310,17 +279,15 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn read_int(&mut self, prefix: char, radix: u32) -> Option<String> {
-        let mut ident = String::from("");
-        ident.push(prefix);
+    fn read_int(&mut self, start: usize, radix: u32) -> Option<&'a str> {
         while let Some(&chr) = self.peek_char() {
             if chr.is_digit(radix) {
-                ident.push(self.read_char()?);
+                self.read_char()?;
             } else {
                 break;
             }
         }
-        Some(ident)
+        self.input.get(start..self.position)
     }
 
     fn peek_char(&mut self) -> Option<&char> {
@@ -328,14 +295,16 @@ impl<'a> Lexer<'a> {
     }
 
     fn read_char(&mut self) -> Option<char> {
-        self.input_iter.next()
+        let r = self.input_iter.next();
+        self.position += 1;
+        r
     }
 }
 
-impl Iterator for Lexer<'_> {
-    type Item = Token;
+impl<'literal> Iterator for Lexer<'literal> {
+    type Item = Token<'literal>;
 
-    fn next(&mut self) -> Option<Self::Item> {
+    fn next<'l>(&mut self) -> Option<Self::Item> {
         if self.completed {
             None
         } else {
