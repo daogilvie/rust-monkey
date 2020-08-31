@@ -34,17 +34,17 @@ impl Environment {
         }
     }
 
-    fn upsert_ident(&self, ident: String, value: Object) {
+    fn upsert_ident(&self, ident: &str, value: Object) {
         // SAFETY: I know that no interior member of the hashmap has given
         // out an external reference, and that only one update can be happening
         // at a time as UnsafeCell ==> !Sync
         unsafe {
             let map = &mut *self.identifiers.get();
-            map.insert(ident, value);
+            map.insert(String::from(ident), value);
         }
     }
 
-    fn get_current_value(&self, ident: &String) -> Option<Object> {
+    fn get_current_value(&self, ident: &str) -> Option<Object> {
         // SAFETY: We clone on output here so that the unsafe insert can be done
         // above. We know that no other thread is accessing this.
         let o = unsafe { (&*self.identifiers.get()).get(ident) };
@@ -82,10 +82,14 @@ fn eval_prefix_expression(operator: &Token, right: Object) -> Result<Object, Str
     }
 }
 
-fn eval_identifier(ident: String, environment: &Environment) -> Result<Object, String> {
-    match environment.get_current_value(&ident) {
+fn eval_identifier(ident: Token, environment: &Environment) -> Result<Object, String> {
+    let ident_name = ident.get_literal().unwrap();
+    match environment.get_current_value(ident_name) {
         Some(o) => Ok(o),
-        None => Err(format!("undefined identifier: {}", ident)),
+        None => Err(format!(
+            "undefined identifier: {}",
+            ident.get_literal().unwrap()
+        )),
     }
 }
 
@@ -202,13 +206,9 @@ fn eval_statement(
             Ok(r)
         }
         StatementKind::Let { name, value } => {
-            if let ExpressionKind::Identifier { name } = &name.kind {
-                let v = eval_expression(value, environment)?;
-                environment.upsert_ident(name.clone(), v.result.clone());
-                Ok(EvalResult::with_object(v.result))
-            } else {
-                Err(format!("Trying to assign to {:?} expression", name.kind))
-            }
+            let v = eval_expression(value, environment)?;
+            environment.upsert_ident(name.get_literal().unwrap(), v.result.clone());
+            Ok(EvalResult::with_object(v.result))
         }
     }
 }

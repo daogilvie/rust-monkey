@@ -12,89 +12,58 @@ pub mod ast {
         fn get_token_literal(&self) -> Option<&str>;
     }
 
-    trait Expression {
-        fn get_type(&self) -> ExpressionKind;
-    }
-
-    struct BooleanLiteral {
-        value: bool,
-    }
-
-    struct IntegerLiteral {
-        value: usize,
-    }
-
-    struct Identifier<'a> {
-        name: &'a str,
-    }
-
-    struct InfixExpression<'a> {
-        left: Box<dyn Expression>,
-        operator: lex::Token<'a>,
-        right: Box<dyn Expression>,
-    }
-
-    struct PrefixExpression<'a> {
-        operator: lex::Token<'a>,
-        right: Box<dyn Expression>,
-    }
-
-    struct IfConditional {
-        condition: Box<dyn Expression>,
-        consequence: Box<StatementBlock>,
-        alternative: Box<StatementBlock>,
-    }
-
-    struct FunctionLiteral<'a> {
-        parameters: Vec<&'a str>,
-        body: Box<StatementBlock>,
-    }
-
-    struct CallExpression {
-        function: &FunctionLiteral,
-        arguments: Vec<dyn Expression>,
-    }
-
     #[derive(Debug)]
     pub enum ExpressionKind<'a> {
         BooleanLiteral {
             value: bool,
         },
         Identifier {
-            name: &'a str,
+            name: lex::Token<'a>,
         },
         InfixExpression {
-            left: Box<ExpressionNode>,
+            left: Box<ExpressionNode<'a>>,
             operator: lex::Token<'a>,
-            right: Box<ExpressionNode>,
+            right: Box<ExpressionNode<'a>>,
         },
         IntegerLiteral {
             value: i64,
         },
         PrefixExpression {
             operator: lex::Token<'a>,
-            right: Box<ExpressionNode>,
+            right: Box<ExpressionNode<'a>>,
         },
         IfConditional {
-            condition: Box<ExpressionNode>,
-            consequence: Box<StatementNode>,
-            alternative: Option<Box<StatementNode>>,
+            condition: Box<ExpressionNode<'a>>,
+            consequence: Box<StatementNode<'a>>,
+            alternative: Option<Box<StatementNode<'a>>>,
         },
         FunctionLiteral {
-            parameters: Vec<ExpressionNode>,
-            body: Box<StatementNode>,
+            parameters: Vec<ExpressionNode<'a>>,
+            body: Box<StatementNode<'a>>,
         },
         CallExpression {
-            function: Box<ExpressionNode>,
-            arguments: Vec<ExpressionNode>,
+            function: Box<ExpressionNode<'a>>,
+            arguments: Vec<ExpressionNode<'a>>,
         },
     }
 
-    impl fmt::Display for ExpressionKind {
+    #[derive(Debug)]
+    pub struct ExpressionNode<'a> {
+        pub token: lex::Token<'a>,
+        pub kind: ExpressionKind<'a>,
+    }
+
+    impl ASTNode for ExpressionNode<'_> {
+        fn get_token_literal(&self) -> Option<&str> {
+            self.token.get_literal()
+        }
+    }
+
+    impl<'a> fmt::Display for ExpressionNode<'a> {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            match &self {
+            match &self.kind {
                 ExpressionKind::BooleanLiteral { value } => write!(f, "{}", value),
-                ExpressionKind::Identifier { name } => write!(f, "{}", name),
+                ExpressionKind::Identifier { name } => write!(f, "{}", name.get_literal().unwrap()),
                 ExpressionKind::InfixExpression {
                     left,
                     operator,
@@ -145,52 +114,43 @@ pub mod ast {
         }
     }
 
-    trait Statement {
-        fn get_type(&self) -> StatementKind;
-    }
-
-    struct StatementBlock {
-        statements: Vec<dyn Statement>
-    }
-
-    struct LetStatement<'a> {
-        name: &'a str,
-        value: Box<dyn Expression>
-    }
-
-    struct ReturnStatement {
-        value: Box<dyn Expression>
-    }
-
-    struct ExpressionStatement {
-        expression: Box<dyn Expression>
-    }
-
     #[derive(Debug)]
     pub enum StatementKind<'a> {
         Let {
-            name: &'a str,
-            value: Box<dyn Expression>,
+            name: lex::Token<'a>,
+            value: ExpressionNode<'a>,
         },
         Return {
-            value: Box<dyn ExpressionNode>,
+            value: ExpressionNode<'a>,
         },
         Expression {
-            expression: ExpressionNode,
+            expression: ExpressionNode<'a>,
         },
-        StatementBlock {
-            statements: Vec<StatementNode>,
+        BlockStatement {
+            statements: Vec<StatementNode<'a>>,
         },
     }
 
-    impl fmt::Display for StatementKind {
+    #[derive(Debug)]
+    pub struct StatementNode<'a> {
+        pub token: lex::Token<'a>,
+        pub kind: StatementKind<'a>,
+    }
+
+    impl<'a> ASTNode for StatementNode<'a> {
+        fn get_token_literal(&self) -> Option<&str> {
+            self.token.get_literal()
+        }
+    }
+
+    impl<'a> fmt::Display for StatementNode<'a> {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             match &self.kind {
                 StatementKind::Let { name, value } => write!(
                     f,
                     "{} {} = {};",
                     self.get_token_literal().unwrap(),
-                    name,
+                    name.get_literal().unwrap(),
                     value
                 ),
                 StatementKind::Return { value } => {
@@ -208,11 +168,11 @@ pub mod ast {
     }
 
     /// Root node of all Monkey ASTs
-    pub struct Program {
-        pub statements: Vec<StatementNode>,
+    pub struct Program<'a> {
+        pub statements: Vec<StatementNode<'a>>,
     }
 
-    impl fmt::Display for Program {
+    impl<'a> fmt::Display for Program<'a> {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             for statement in &self.statements {
                 writeln!(f, "{}", statement)?;
@@ -230,16 +190,11 @@ pub mod ast {
                 statements: vec![StatementNode {
                     token: lex::Token::with_str(lex::TokenType::LET, "let"),
                     kind: StatementKind::Let {
-                        name: ExpressionNode {
-                            token: lex::Token::with_str(lex::TokenType::IDENT, "myVar"),
-                            kind: ExpressionKind::Identifier {
-                                name: String::from("myVar"),
-                            },
-                        },
+                        name: lex::Token::with_str(lex::TokenType::IDENT, "myVar"),
                         value: ExpressionNode {
                             token: lex::Token::with_str(lex::TokenType::IDENT, "anotherVar"),
                             kind: ExpressionKind::Identifier {
-                                name: String::from("anotherVar"),
+                                name: lex::Token::with_str(lex::TokenType::IDENT, "anotherVar"),
                             },
                         },
                     },
@@ -300,7 +255,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn advance_tokens(&mut self) -> lex::Token {
+    pub fn advance_tokens(&mut self) -> lex::Token<'a> {
         let next = self.lexer.next_token().expect("Unable to advance token");
         let mut peek_unwrapped: lex::Token = self.peek_token.take().unwrap();
         mem::swap(&mut peek_unwrapped, &mut self.current_token);
@@ -336,7 +291,7 @@ impl<'a> Parser<'a> {
         &self.errors
     }
 
-    fn parse_statement(&mut self) -> Result<StatementNode, String> {
+    fn parse_statement(&mut self) -> Result<StatementNode<'a>, String> {
         match self.current_token.token_type {
             LET => self.parse_let_statement(),
             RETURN => self.parse_return_statement(),
@@ -354,7 +309,7 @@ impl<'a> Parser<'a> {
     fn advance_tokens_if_next_of_type(
         &mut self,
         expected_type: lex::TokenType,
-    ) -> Result<lex::Token, String> {
+    ) -> Result<lex::Token<'a>, String> {
         if let Some(t) = &self.peek_token {
             if &t.token_type == &expected_type {
                 Ok(self.advance_tokens())
@@ -387,26 +342,24 @@ impl<'a> Parser<'a> {
         self.current_token.token_type == expected_type
     }
 
-    fn parse_let_statement(&mut self) -> Result<StatementNode, String> {
+    fn parse_let_statement(&mut self) -> Result<StatementNode<'a>, String> {
         let original_token = self.advance_tokens_if_next_of_type(IDENT)?;
         let ident_token = self.advance_tokens_if_next_of_type(ASSIGN)?;
-        let ident_name = ident_token.get_literal().unwrap().clone();
         self.advance_tokens();
         let value = self.parse_expression(OperatorPrecedence::LOWEST)?;
         if self.is_next_token_of_type(SEMICOLON) {
             self.advance_tokens();
         }
-        let name = ExpressionNode {
-            token: ident_token,
-            kind: ExpressionKind::Identifier { name: ident_name },
-        };
         Ok(StatementNode {
             token: original_token,
-            kind: StatementKind::Let { name, value },
+            kind: StatementKind::Let {
+                name: ident_token,
+                value,
+            },
         })
     }
 
-    fn parse_return_statement(&mut self) -> Result<StatementNode, String> {
+    fn parse_return_statement(&mut self) -> Result<StatementNode<'a>, String> {
         let original_token = self.advance_tokens();
         let value = self.parse_expression(OperatorPrecedence::LOWEST)?;
         if self.is_next_token_of_type(SEMICOLON) {
@@ -418,7 +371,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn attempt_parse_expression_statement(&mut self) -> Result<StatementNode, String> {
+    fn attempt_parse_expression_statement(&mut self) -> Result<StatementNode<'a>, String> {
         let original_token = self.current_token.clone();
         let result = self.parse_expression(OperatorPrecedence::LOWEST)?;
 
@@ -440,7 +393,7 @@ impl<'a> Parser<'a> {
     fn parse_expression(
         &mut self,
         precedence: OperatorPrecedence,
-    ) -> Result<ExpressionNode, String> {
+    ) -> Result<ExpressionNode<'a>, String> {
         // This is the power-house of the Pratt-esque parsing
         // strategy that the book gets us to implement.
         // The key tactic is that we attempt to parse the expression as a prefix
@@ -467,7 +420,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn attempt_prefix_parse(&mut self) -> Result<Option<ExpressionNode>, String> {
+    fn attempt_prefix_parse(&mut self) -> Result<Option<ExpressionNode<'a>>, String> {
         let parse_attempt = match &self.current_token.token_type {
             lex::TokenType::IDENT => self.parse_identifier()?,
             lex::TokenType::INT => self.parse_integer_literal()?,
@@ -501,16 +454,15 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_identifier(&mut self) -> Result<ExpressionNode, String> {
+    fn parse_identifier(&mut self) -> Result<ExpressionNode<'a>, String> {
         let token = self.current_token.clone();
-        let name = token.get_literal().unwrap().clone();
         Ok(ExpressionNode {
-            token,
-            kind: ExpressionKind::Identifier { name },
+            token: token.clone(),
+            kind: ExpressionKind::Identifier { name: token },
         })
     }
 
-    fn parse_integer_literal(&mut self) -> Result<ExpressionNode, String> {
+    fn parse_integer_literal(&mut self) -> Result<ExpressionNode<'a>, String> {
         let token = self.current_token.clone();
         let lit = token.get_literal().unwrap();
         let attempted_parse = lit.parse();
@@ -523,7 +475,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_boolean_literal(&mut self) -> Result<ExpressionNode, String> {
+    fn parse_boolean_literal(&mut self) -> Result<ExpressionNode<'a>, String> {
         let token = self.current_token.clone();
         let value = match &token.token_type {
             lex::TokenType::TRUE => true,
@@ -542,7 +494,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_grouped_expression(&mut self) -> Result<ExpressionNode, String> {
+    fn parse_grouped_expression(&mut self) -> Result<ExpressionNode<'a>, String> {
         self.advance_tokens();
         let expr = self.parse_expression(OperatorPrecedence::LOWEST);
         if !self.is_next_token_of_type(lex::TokenType::RPAREN) {
@@ -558,7 +510,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_if_expression(&mut self) -> Result<ExpressionNode, String> {
+    fn parse_if_expression(&mut self) -> Result<ExpressionNode<'a>, String> {
         if !self.is_next_token_of_type(lex::TokenType::LPAREN) {
             return Err(format!("Expecting LPAREN, got {:?}", self.peek_token));
         }
@@ -604,7 +556,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_prefix_expression(&mut self) -> Result<ExpressionNode, String> {
+    fn parse_prefix_expression(&mut self) -> Result<ExpressionNode<'a>, String> {
         let operator_token = self.advance_tokens();
 
         let rhs = self.parse_expression(OperatorPrecedence::PREFIX)?;
@@ -617,7 +569,10 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_infix_expression(&mut self, lhs: ExpressionNode) -> Result<ExpressionNode, String> {
+    fn parse_infix_expression(
+        &mut self,
+        lhs: ExpressionNode<'a>,
+    ) -> Result<ExpressionNode<'a>, String> {
         let current_precedence = self.get_current_token_precedence();
         let expr_token = self.advance_tokens();
         match &expr_token.token_type {
@@ -637,7 +592,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_block_statement(&mut self) -> Result<StatementNode, String> {
+    fn parse_block_statement(&mut self) -> Result<StatementNode<'a>, String> {
         let mut statements = Vec::new();
         let token = self.advance_tokens();
         while !self.is_current_token_of_type(lex::TokenType::RBRACE)
@@ -653,7 +608,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_function_literal(&mut self) -> Result<ExpressionNode, String> {
+    fn parse_function_literal(&mut self) -> Result<ExpressionNode<'a>, String> {
         let original_token = self.advance_tokens_if_next_of_type(lex::TokenType::LPAREN)?;
         let parameters = self.parse_function_parameters()?;
 
@@ -668,7 +623,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_function_parameters(&mut self) -> Result<Vec<ExpressionNode>, String> {
+    fn parse_function_parameters(&mut self) -> Result<Vec<ExpressionNode<'a>>, String> {
         let mut params = Vec::new();
         if self.is_next_token_of_type(lex::TokenType::RPAREN) {
             self.advance_tokens();
@@ -687,9 +642,9 @@ impl<'a> Parser<'a> {
 
     fn parse_call_expression(
         &mut self,
-        original_token: lex::Token,
-        function: ExpressionNode,
-    ) -> Result<ExpressionNode, String> {
+        original_token: lex::Token<'a>,
+        function: ExpressionNode<'a>,
+    ) -> Result<ExpressionNode<'a>, String> {
         let arguments = self.parse_call_arguments()?;
         Ok(ExpressionNode {
             token: original_token,
@@ -700,7 +655,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_call_arguments(&mut self) -> Result<Vec<ExpressionNode>, String> {
+    fn parse_call_arguments(&mut self) -> Result<Vec<ExpressionNode<'a>>, String> {
         let mut params = Vec::new();
         if self.is_next_token_of_type(lex::TokenType::RPAREN) {
             self.advance_tokens();
@@ -728,8 +683,8 @@ mod tests {
         assert_eq!(parser.peek_token.unwrap().get_literal().unwrap(), "x");
     }
 
-    fn check_is_identifier(expression: &ExpressionNode, expected_name: &str) {
-        match &expression.kind {
+    fn check_is_identifier(name: &ExpressionNode, expected_name: &str) {
+        match &name.kind {
             ExpressionKind::Identifier { name } => {
                 assert_eq!(
                     name, name,
@@ -767,7 +722,7 @@ mod tests {
         }
     }
 
-    fn check_infix_expression<'a>(expression: &'a ExpressionNode, expected_str: &str) {
+    fn check_infix_expression(expression: &ExpressionNode, expected_str: &str) {
         if let ExpressionKind::InfixExpression {
             left: _,
             operator: _,
@@ -807,7 +762,7 @@ mod tests {
                     let statement = program.statements.get(0).unwrap();
                     match &statement.kind {
                         StatementKind::Let { name, value } => {
-                            check_is_identifier(name, expected_ident);
+                            assert_eq!(name.get_literal().unwrap(), expected_ident);
                             $checkfn(value, expected_value);
                         }
                         _ => assert!(false, "Encountered unexpected non-let statement"),
@@ -853,7 +808,7 @@ mod tests {
         for (statement, ident) in pairs {
             match &statement.kind {
                 StatementKind::Let { name, value } => {
-                    check_is_identifier(name, ident.0);
+                    assert_eq!(name.get_literal().unwrap(), ident.0);
                     check_is_int_literal(value, ident.1);
                 }
                 _ => assert!(false, "Encountered unexpected non-let statement"),
