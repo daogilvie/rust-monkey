@@ -9,27 +9,70 @@ pub mod ast {
     use std::fmt;
 
     pub trait ASTNode {
-        fn get_token_literal(&self) -> Option<&String>;
+        fn get_token_literal(&self) -> Option<&str>;
+    }
+
+    trait Expression {
+        fn get_type(&self) -> ExpressionKind;
+    }
+
+    struct BooleanLiteral {
+        value: bool,
+    }
+
+    struct IntegerLiteral {
+        value: usize,
+    }
+
+    struct Identifier<'a> {
+        name: &'a str,
+    }
+
+    struct InfixExpression<'a> {
+        left: Box<dyn Expression>,
+        operator: lex::Token<'a>,
+        right: Box<dyn Expression>,
+    }
+
+    struct PrefixExpression<'a> {
+        operator: lex::Token<'a>,
+        right: Box<dyn Expression>,
+    }
+
+    struct IfConditional {
+        condition: Box<dyn Expression>,
+        consequence: Box<StatementBlock>,
+        alternative: Box<StatementBlock>,
+    }
+
+    struct FunctionLiteral<'a> {
+        parameters: Vec<&'a str>,
+        body: Box<StatementBlock>,
+    }
+
+    struct CallExpression {
+        function: &FunctionLiteral,
+        arguments: Vec<dyn Expression>,
     }
 
     #[derive(Debug)]
-    pub enum ExpressionKind {
+    pub enum ExpressionKind<'a> {
         BooleanLiteral {
             value: bool,
         },
         Identifier {
-            name: String,
+            name: &'a str,
         },
         InfixExpression {
             left: Box<ExpressionNode>,
-            operator: lex::Token,
+            operator: lex::Token<'a>,
             right: Box<ExpressionNode>,
         },
         IntegerLiteral {
             value: i64,
         },
         PrefixExpression {
-            operator: lex::Token,
+            operator: lex::Token<'a>,
             right: Box<ExpressionNode>,
         },
         IfConditional {
@@ -47,21 +90,9 @@ pub mod ast {
         },
     }
 
-    #[derive(Debug)]
-    pub struct ExpressionNode {
-        pub token: lex::Token,
-        pub kind: ExpressionKind,
-    }
-
-    impl ASTNode for ExpressionNode {
-        fn get_token_literal(&self) -> Option<&String> {
-            self.token.get_literal()
-        }
-    }
-
-    impl fmt::Display for ExpressionNode {
+    impl fmt::Display for ExpressionKind {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            match &self.kind {
+            match &self {
                 ExpressionKind::BooleanLiteral { value } => write!(f, "{}", value),
                 ExpressionKind::Identifier { name } => write!(f, "{}", name),
                 ExpressionKind::InfixExpression {
@@ -114,36 +145,45 @@ pub mod ast {
         }
     }
 
+    trait Statement {
+        fn get_type(&self) -> StatementKind;
+    }
+
+    struct StatementBlock {
+        statements: Vec<dyn Statement>
+    }
+
+    struct LetStatement<'a> {
+        name: &'a str,
+        value: Box<dyn Expression>
+    }
+
+    struct ReturnStatement {
+        value: Box<dyn Expression>
+    }
+
+    struct ExpressionStatement {
+        expression: Box<dyn Expression>
+    }
+
     #[derive(Debug)]
-    pub enum StatementKind {
+    pub enum StatementKind<'a> {
         Let {
-            name: ExpressionNode,
-            value: ExpressionNode,
+            name: &'a str,
+            value: Box<dyn Expression>,
         },
         Return {
-            value: ExpressionNode,
+            value: Box<dyn ExpressionNode>,
         },
         Expression {
             expression: ExpressionNode,
         },
-        BlockStatement {
+        StatementBlock {
             statements: Vec<StatementNode>,
         },
     }
 
-    #[derive(Debug)]
-    pub struct StatementNode {
-        pub token: lex::Token,
-        pub kind: StatementKind,
-    }
-
-    impl ASTNode for StatementNode {
-        fn get_token_literal(&self) -> Option<&String> {
-            self.token.get_literal()
-        }
-    }
-
-    impl fmt::Display for StatementNode {
+    impl fmt::Display for StatementKind {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             match &self.kind {
                 StatementKind::Let { name, value } => write!(
@@ -169,7 +209,7 @@ pub mod ast {
 
     /// Root node of all Monkey ASTs
     pub struct Program {
-        pub statements: Vec<StatementNode>
+        pub statements: Vec<StatementNode>,
     }
 
     impl fmt::Display for Program {
@@ -242,8 +282,8 @@ fn get_operator_precedence(&token: &lex::TokenType) -> OperatorPrecedence {
 
 pub struct Parser<'a> {
     lexer: lex::Lexer<'a>,
-    current_token: lex::Token,
-    peek_token: Option<lex::Token>,
+    current_token: lex::Token<'a>,
+    peek_token: Option<lex::Token<'a>>,
     errors: Vec<String>,
 }
 
@@ -727,7 +767,7 @@ mod tests {
         }
     }
 
-    fn check_infix_expression(expression: &ExpressionNode, expected_str: &str) {
+    fn check_infix_expression<'a>(expression: &'a ExpressionNode, expected_str: &str) {
         if let ExpressionKind::InfixExpression {
             left: _,
             operator: _,
