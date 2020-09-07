@@ -34,12 +34,12 @@ pub mod ast {
         },
         IfConditional {
             condition: Box<ExpressionNode<'a>>,
-            consequence: Box<StatementNode<'a>>,
-            alternative: Option<Box<StatementNode<'a>>>,
+            consequence: Box<StatementBlock<'a>>,
+            alternative: Option<Box<StatementBlock<'a>>>,
         },
         FunctionLiteral {
             parameters: Vec<lex::Token<'a>>,
-            body: Box<StatementNode<'a>>,
+            body: Box<StatementBlock<'a>>,
         },
         CallExpression {
             function: Box<ExpressionNode<'a>>,
@@ -126,9 +126,34 @@ pub mod ast {
         Expression {
             expression: ExpressionNode<'a>,
         },
-        BlockStatement {
-            statements: Vec<StatementNode<'a>>,
-        },
+    }
+
+    #[derive(Debug)]
+    pub struct StatementBlock<'a> {
+        statements: Vec<StatementNode<'a>>,
+    }
+
+    impl<'a> StatementBlock<'a> {
+        pub fn from_statements(statements: Vec<StatementNode<'a>>) -> Self {
+            Self { statements }
+        }
+
+        pub fn get_statements(&self) -> &Vec<StatementNode<'a>> {
+            &self.statements
+        }
+
+        pub fn take_statements(&mut self) -> Vec<StatementNode<'a>> {
+            std::mem::replace(&mut self.statements, Vec::new())
+        }
+    }
+
+    impl<'a> fmt::Display for StatementBlock<'a> {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            for statement in &self.statements {
+                write!(f, "{}", statement)?;
+            }
+            write!(f, "")
+        }
     }
 
     #[derive(Debug)]
@@ -157,12 +182,6 @@ pub mod ast {
                     write!(f, "{} {};", self.get_token_literal().unwrap(), value)
                 }
                 StatementKind::Expression { expression } => write!(f, "{}", expression),
-                StatementKind::BlockStatement { statements } => {
-                    for statement in statements {
-                        write!(f, "{}", statement)?;
-                    }
-                    write!(f, "")
-                }
             }
         }
     }
@@ -592,9 +611,9 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_block_statement(&mut self) -> Result<StatementNode<'a>, String> {
+    fn parse_block_statement(&mut self) -> Result<StatementBlock<'a>, String> {
         let mut statements = Vec::new();
-        let token = self.advance_tokens();
+        self.advance_tokens();
         while !self.is_current_token_of_type(lex::TokenType::RBRACE)
             && !self.is_current_token_of_type(lex::TokenType::EOF)
         {
@@ -602,10 +621,7 @@ impl<'a> Parser<'a> {
             statements.push(statement);
             self.advance_tokens();
         }
-        Ok(StatementNode {
-            token,
-            kind: StatementKind::BlockStatement { statements },
-        })
+        Ok(StatementBlock::from_statements(statements))
     }
 
     fn parse_function_literal(&mut self) -> Result<ExpressionNode<'a>, String> {
@@ -1214,12 +1230,7 @@ mod tests {
                     alternative,
                 } => {
                     assert_eq!(format!("{}", condition), "(x < y)");
-                    match &consequence.kind {
-                        StatementKind::BlockStatement { statements } => {
-                            assert_eq!(statements.len(), 1)
-                        }
-                        _ => assert!(false, "Consequence not a BlockStatement"),
-                    }
+                    assert_eq!(consequence.get_statements().len(), 1);
                     assert_eq!(format!("{}", consequence), "x");
                     assert!(alternative.is_none())
                 }
@@ -1257,22 +1268,17 @@ mod tests {
                     alternative,
                 } => {
                     assert_eq!(format!("{}", condition), "(x < y)");
-                    match &consequence.kind {
-                        StatementKind::BlockStatement { statements } => {
-                            assert_eq!(statements.len(), 1);
-                            assert_eq!(format!("{}", statements.get(0).unwrap()), "x")
-                        }
-                        _ => assert!(false, "Consequence not a BlockStatement"),
-                    }
+                    assert_eq!(consequence.get_statements().len(), 1);
+                    assert_eq!(
+                        format!("{}", consequence.get_statements().get(0).unwrap()),
+                        "x"
+                    );
                     assert_eq!(format!("{}", consequence), "x");
                     match alternative {
-                        Some(a) => match &a.kind {
-                            StatementKind::BlockStatement { statements } => {
-                                assert_eq!(statements.len(), 1);
-                                assert_eq!(format!("{}", statements.get(0).unwrap()), "y")
-                            }
-                            _ => assert!(false, "Alternative not a BlockStatement"),
-                        },
+                        Some(a) => {
+                            assert_eq!(a.get_statements().len(), 1);
+                            assert_eq!(format!("{}", a.get_statements().get(0).unwrap()), "y")
+                        }
                         None => assert!(false, "Alternative not present"),
                     }
                 }
@@ -1313,13 +1319,11 @@ mod tests {
                     );
                     assert_eq!(parameters.get(0).unwrap().get_literal().unwrap(), "x");
                     assert_eq!(parameters.get(1).unwrap().get_literal().unwrap(), "y");
-                    match &body.kind {
-                        StatementKind::BlockStatement { statements } => {
-                            assert_eq!(statements.len(), 1);
-                            assert_eq!(format!("{}", statements.get(0).unwrap()), "(x + y)")
-                        }
-                        _ => assert!(false, "Body not a BlockStatement"),
-                    }
+                    assert_eq!(body.get_statements().len(), 1);
+                    assert_eq!(
+                        format!("{}", body.get_statements().get(0).unwrap()),
+                        "(x + y)"
+                    )
                 }
                 _ => assert!(
                     false,
@@ -1361,13 +1365,8 @@ mod tests {
                         parameters
                     );
                     assert_eq!(parameters.get(0).unwrap().get_literal().unwrap(), "x");
-                    match &body.kind {
-                        StatementKind::BlockStatement { statements } => {
-                            assert_eq!(statements.len(), 1);
-                            assert_eq!(format!("{}", statements.get(0).unwrap()), "x")
-                        }
-                        _ => assert!(false, "Body not a BlockStatement"),
-                    }
+                    assert_eq!(body.get_statements().len(), 1);
+                    assert_eq!(format!("{}", body.get_statements().get(0).unwrap()), "x");
                 }
                 _ => assert!(
                     false,
@@ -1408,13 +1407,11 @@ mod tests {
                         "Expecting zero params, got {:?}",
                         parameters
                     );
-                    match &body.kind {
-                        StatementKind::BlockStatement { statements } => {
-                            assert_eq!(statements.len(), 1);
-                            assert_eq!(format!("{}", statements.get(0).unwrap()), "(x + y)")
-                        }
-                        _ => assert!(false, "Body not a BlockStatement"),
-                    }
+                    assert_eq!(body.get_statements().len(), 1);
+                    assert_eq!(
+                        format!("{}", body.get_statements().get(0).unwrap()),
+                        "(x + y)"
+                    );
                 }
                 _ => assert!(
                     false,

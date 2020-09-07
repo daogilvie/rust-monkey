@@ -1,7 +1,9 @@
 use crate::lex::{Token, TokenType};
 use crate::object::*;
 use crate::parse;
-use crate::parse::ast::{ExpressionKind, ExpressionNode, StatementKind, StatementNode};
+use crate::parse::ast::{
+    ExpressionKind, ExpressionNode, StatementBlock, StatementKind, StatementNode,
+};
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
 
@@ -165,9 +167,9 @@ fn eval_expression(expr: ExpressionNode, environment: &Environment) -> Result<Ev
         } => {
             let eval_c = eval_expression(*condition, environment)?;
             if is_truthy(&eval_c.result) {
-                eval_statement(*consequence, environment)
+                eval_statement_block(*consequence, environment)
             } else if let Some(alt) = alternative {
-                eval_statement(*alt, environment)
+                eval_statement_block(*alt, environment)
             } else {
                 Ok(EvalResult::with_object(Object::with_type(ObjectType::Null)))
             }
@@ -179,27 +181,32 @@ fn eval_expression(expr: ExpressionNode, environment: &Environment) -> Result<Ev
     }
 }
 
+fn eval_statement_block(
+    mut block: StatementBlock,
+    environment: &Environment,
+) -> Result<EvalResult, String> {
+    let mut result: Result<EvalResult, String> = Ok(EvalResult::with_object_and_return(
+        Object::with_type(ObjectType::Null),
+        false,
+    ));
+
+    for statement in block.take_statements() {
+        let inner_result = eval_statement(statement, environment)?;
+        let returning = inner_result.is_return;
+        result = Ok(inner_result);
+        if returning {
+            break;
+        }
+    }
+    result
+}
+
 fn eval_statement(
     statement: StatementNode,
     environment: &Environment,
 ) -> Result<EvalResult, String> {
     match statement.kind {
         StatementKind::Expression { expression } => eval_expression(expression, environment),
-        StatementKind::BlockStatement { statements } => {
-            let mut result: Result<EvalResult, String> = Ok(EvalResult::with_object_and_return(
-                Object::with_type(ObjectType::Null),
-                false,
-            ));
-            for statement in statements {
-                let inner_result = eval_statement(statement, environment)?;
-                let returning = inner_result.is_return;
-                result = Ok(inner_result);
-                if returning {
-                    break;
-                }
-            }
-            result
-        }
         StatementKind::Return { value } => {
             let mut r = eval_expression(value, environment)?;
             r.is_return = true;
