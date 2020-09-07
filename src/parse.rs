@@ -38,7 +38,7 @@ pub mod ast {
             alternative: Option<Box<StatementNode<'a>>>,
         },
         FunctionLiteral {
-            parameters: Vec<ExpressionNode<'a>>,
+            parameters: Vec<lex::Token<'a>>,
             body: Box<StatementNode<'a>>,
         },
         CallExpression {
@@ -623,19 +623,17 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_function_parameters(&mut self) -> Result<Vec<ExpressionNode<'a>>, String> {
+    fn parse_function_parameters(&mut self) -> Result<Vec<lex::Token<'a>>, String> {
         let mut params = Vec::new();
         if self.is_next_token_of_type(lex::TokenType::RPAREN) {
             self.advance_tokens();
         } else {
             self.advance_tokens();
-            params.push(self.parse_identifier()?);
             while self.is_next_token_of_type(lex::TokenType::COMMA) {
+                params.push(self.advance_tokens());
                 self.advance_tokens();
-                self.advance_tokens();
-                params.push(self.parse_identifier()?);
             }
-            self.advance_tokens_if_next_of_type(lex::TokenType::RPAREN)?;
+            params.push(self.advance_tokens_if_next_of_type(lex::TokenType::RPAREN)?);
         }
         Ok(params)
     }
@@ -1313,8 +1311,8 @@ mod tests {
                         "Expecting two params, got {:?}",
                         parameters
                     );
-                    check_is_identifier(parameters.get(0).unwrap(), "x");
-                    check_is_identifier(parameters.get(1).unwrap(), "y");
+                    assert_eq!(parameters.get(0).unwrap().get_literal().unwrap(), "x");
+                    assert_eq!(parameters.get(1).unwrap().get_literal().unwrap(), "y");
                     match &body.kind {
                         StatementKind::BlockStatement { statements } => {
                             assert_eq!(statements.len(), 1);
@@ -1362,7 +1360,7 @@ mod tests {
                         "Expecting one param, got {:?}",
                         parameters
                     );
-                    check_is_identifier(parameters.get(0).unwrap(), "x");
+                    assert_eq!(parameters.get(0).unwrap().get_literal().unwrap(), "x");
                     match &body.kind {
                         StatementKind::BlockStatement { statements } => {
                             assert_eq!(statements.len(), 1);
