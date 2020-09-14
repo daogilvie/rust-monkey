@@ -24,11 +24,9 @@ pub fn start(preamble: String) -> io::Result<()> {
         let mut parser = parse::Parser::for_lexer(lexer);
         let program = parser.parse();
         match program {
-            Ok(p) => {
-                match eval::eval_program(p, Some(&env)) {
-                    Ok(r) => print!("{}", r),
-                    Err(e) => eprintln!("Eval Error: {}", e)
-                }
+            Ok(p) => match eval::eval_program(p, Some(&env)) {
+                Ok(r) => print!("{}", r),
+                Err(e) => eprintln!("Eval Error: {}", e),
             },
             Err(s) => {
                 eprintln!("{}", s);

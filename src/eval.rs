@@ -130,10 +130,10 @@ fn eval_infix_expression(operator: Token, left: Object, right: Object) -> Result
 
 fn eval_expression(expr: ExpressionNode, environment: &Environment) -> Result<EvalResult, String> {
     match expr.kind {
-        ExpressionKind::IntegerLiteral { value } => Ok(EvalResult::with_object(Object::with_type(
+        ExpressionKind::IntegerLiteral(value) => Ok(EvalResult::with_object(Object::with_type(
             ObjectType::Integer(value),
         ))),
-        ExpressionKind::BooleanLiteral { value } => {
+        ExpressionKind::BooleanLiteral(value) => {
             if value {
                 Ok(EvalResult::with_object(TRUE))
             } else {
@@ -174,7 +174,7 @@ fn eval_expression(expr: ExpressionNode, environment: &Environment) -> Result<Ev
                 Ok(EvalResult::with_object(Object::with_type(ObjectType::Null)))
             }
         }
-        ExpressionKind::Identifier { name } => {
+        ExpressionKind::Identifier(name) => {
             Ok(EvalResult::with_object(eval_identifier(name, environment)?))
         }
         _ => Err(format!("Cannot eval '{:?}'", expr.kind)),
@@ -206,8 +206,8 @@ fn eval_statement(
     environment: &Environment,
 ) -> Result<EvalResult, String> {
     match statement.kind {
-        StatementKind::Expression { expression } => eval_expression(expression, environment),
-        StatementKind::Return { value } => {
+        StatementKind::Expression(expression) => eval_expression(expression, environment),
+        StatementKind::Return(value) => {
             let mut r = eval_expression(value, environment)?;
             r.is_return = true;
             Ok(r)

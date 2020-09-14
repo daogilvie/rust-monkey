@@ -14,20 +14,14 @@ pub mod ast {
 
     #[derive(Debug)]
     pub enum ExpressionKind<'a> {
-        BooleanLiteral {
-            value: bool,
-        },
-        Identifier {
-            name: lex::Token<'a>,
-        },
+        BooleanLiteral(bool),
+        Identifier(lex::Token<'a>),
         InfixExpression {
             left: Box<ExpressionNode<'a>>,
             operator: lex::Token<'a>,
             right: Box<ExpressionNode<'a>>,
         },
-        IntegerLiteral {
-            value: i64,
-        },
+        IntegerLiteral(i64),
         PrefixExpression {
             operator: lex::Token<'a>,
             right: Box<ExpressionNode<'a>>,
@@ -62,8 +56,8 @@ pub mod ast {
     impl<'a> fmt::Display for ExpressionNode<'a> {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             match &self.kind {
-                ExpressionKind::BooleanLiteral { value } => write!(f, "{}", value),
-                ExpressionKind::Identifier { name } => write!(f, "{}", name.get_literal().unwrap()),
+                ExpressionKind::BooleanLiteral(value) => write!(f, "{}", value),
+                ExpressionKind::Identifier(name) => write!(f, "{}", name.get_literal().unwrap()),
                 ExpressionKind::InfixExpression {
                     left,
                     operator,
@@ -75,7 +69,7 @@ pub mod ast {
                     operator.get_literal().unwrap(),
                     right
                 ),
-                ExpressionKind::IntegerLiteral { value } => write!(f, "{}", value),
+                ExpressionKind::IntegerLiteral(value) => write!(f, "{}", value),
                 ExpressionKind::PrefixExpression { operator, right } => {
                     write!(f, "({}{})", operator.get_literal().unwrap(), right)
                 }
@@ -120,12 +114,8 @@ pub mod ast {
             name: lex::Token<'a>,
             value: ExpressionNode<'a>,
         },
-        Return {
-            value: ExpressionNode<'a>,
-        },
-        Expression {
-            expression: ExpressionNode<'a>,
-        },
+        Return(ExpressionNode<'a>),
+        Expression(ExpressionNode<'a>),
     }
 
     #[derive(Debug)]
@@ -178,10 +168,10 @@ pub mod ast {
                     name.get_literal().unwrap(),
                     value
                 ),
-                StatementKind::Return { value } => {
+                StatementKind::Return(value) => {
                     write!(f, "{} {};", self.get_token_literal().unwrap(), value)
                 }
-                StatementKind::Expression { expression } => write!(f, "{}", expression),
+                StatementKind::Expression(expression) => write!(f, "{}", expression),
             }
         }
     }
@@ -212,9 +202,10 @@ pub mod ast {
                         name: lex::Token::with_str(lex::TokenType::IDENT, "myVar"),
                         value: ExpressionNode {
                             token: lex::Token::with_str(lex::TokenType::IDENT, "anotherVar"),
-                            kind: ExpressionKind::Identifier {
-                                name: lex::Token::with_str(lex::TokenType::IDENT, "anotherVar"),
-                            },
+                            kind: ExpressionKind::Identifier(lex::Token::with_str(
+                                lex::TokenType::IDENT,
+                                "anotherVar",
+                            )),
                         },
                     },
                 }],
@@ -386,7 +377,7 @@ impl<'a> Parser<'a> {
         }
         Ok(StatementNode {
             token: original_token,
-            kind: StatementKind::Return { value },
+            kind: StatementKind::Return(value),
         })
     }
 
@@ -405,7 +396,7 @@ impl<'a> Parser<'a> {
 
         Ok(StatementNode {
             token: original_token,
-            kind: StatementKind::Expression { expression: result },
+            kind: StatementKind::Expression(result),
         })
     }
 
@@ -477,7 +468,7 @@ impl<'a> Parser<'a> {
         let token = self.current_token.clone();
         Ok(ExpressionNode {
             token: token.clone(),
-            kind: ExpressionKind::Identifier { name: token },
+            kind: ExpressionKind::Identifier(token),
         })
     }
 
@@ -488,7 +479,7 @@ impl<'a> Parser<'a> {
         match attempted_parse {
             Ok(value) => Ok(ExpressionNode {
                 token,
-                kind: ExpressionKind::IntegerLiteral { value },
+                kind: ExpressionKind::IntegerLiteral(value),
             }),
             Err(_err) => Err(format!("Cannot parse '{}' to i64", lit)),
         }
@@ -509,7 +500,7 @@ impl<'a> Parser<'a> {
 
         Ok(ExpressionNode {
             token,
-            kind: ExpressionKind::BooleanLiteral { value },
+            kind: ExpressionKind::BooleanLiteral(value),
         })
     }
 
@@ -699,7 +690,7 @@ mod tests {
 
     fn check_is_identifier(name: &ExpressionNode, expected_name: &str) {
         match &name.kind {
-            ExpressionKind::Identifier { name } => {
+            ExpressionKind::Identifier(name) => {
                 assert_eq!(
                     name, name,
                     "Expecting ident '{}', got '{}'",
@@ -712,7 +703,7 @@ mod tests {
 
     fn check_is_int_literal(expression: &ExpressionNode, expected_value: i64) {
         match expression.kind {
-            ExpressionKind::IntegerLiteral { value } => {
+            ExpressionKind::IntegerLiteral(value) => {
                 assert_eq!(
                     value, expected_value,
                     "Expecting value '{}', got '{}'",
@@ -725,7 +716,7 @@ mod tests {
 
     fn check_is_boolean(expression: &ExpressionNode, expected_value: bool) {
         match expression.kind {
-            ExpressionKind::BooleanLiteral { value } => {
+            ExpressionKind::BooleanLiteral(value) => {
                 assert_eq!(
                     value, expected_value,
                     "Expecting {}, got {}",
@@ -888,7 +879,7 @@ mod tests {
                     );
                     let statement = program.statements.get(0).unwrap();
                     match &statement.kind {
-                        StatementKind::Return { value } => {
+                        StatementKind::Return ( value ) => {
                             $checkfn(value, expected_value);
                         }
                         _ => assert!(false, "Encountered unexpected non-return statement"),
@@ -931,7 +922,7 @@ mod tests {
         let expected_ints = vec![5, 10, 838383];
         for (statement, expected) in program.statements.iter().zip(expected_ints) {
             match &statement.kind {
-                StatementKind::Return { value } => {
+                StatementKind::Return(value) => {
                     assert_eq!(
                         statement.get_token_literal().unwrap(),
                         "return",
@@ -965,7 +956,7 @@ mod tests {
         );
         let statement = program.statements.get(0).unwrap();
         match &statement.kind {
-            StatementKind::Expression { expression } => {
+            StatementKind::Expression(expression) => {
                 check_is_identifier(expression, "foobar");
             }
             _ => assert!(false, "Encountered unexpected non-expression statement"),
@@ -993,7 +984,7 @@ mod tests {
         );
         let statement = program.statements.get(0).unwrap();
         match &statement.kind {
-            StatementKind::Expression { expression } => {
+            StatementKind::Expression(expression) => {
                 check_is_int_literal(expression, 5);
             }
             _ => assert!(false, "Encountered unexpected non-expression statement"),
@@ -1027,7 +1018,7 @@ mod tests {
                     let statement = program.statements.get(0).unwrap();
 
                     match &statement.kind {
-                        StatementKind::Expression { expression } => match &expression.kind {
+                        StatementKind::Expression ( expression ) => match &expression.kind {
                             ExpressionKind::PrefixExpression { operator, right } => {
                                 assert_eq!(
                                     operator.get_literal().unwrap(),
@@ -1081,7 +1072,7 @@ mod tests {
                     let statement = program.statements.get(0).unwrap();
 
                     match &statement.kind {
-                        StatementKind::Expression { expression } => match &expression.kind {
+                        StatementKind::Expression ( expression ) => match &expression.kind {
                             ExpressionKind::InfixExpression { left, operator, right } => {
                                 assert_eq!(
                                     operator.get_literal().unwrap(),
@@ -1188,14 +1179,14 @@ mod tests {
         );
         let statement_true = program.statements.get(0).unwrap();
         match &statement_true.kind {
-            StatementKind::Expression { expression } => {
+            StatementKind::Expression(expression) => {
                 check_is_boolean(expression, true);
             }
             _ => assert!(false, "Encountered unexpected non-expression statement"),
         }
         let statement_false = program.statements.get(1).unwrap();
         match &statement_false.kind {
-            StatementKind::Expression { expression } => {
+            StatementKind::Expression(expression) => {
                 check_is_boolean(expression, false);
             }
             _ => assert!(false, "Encountered unexpected non-expression statement"),
@@ -1223,7 +1214,7 @@ mod tests {
         );
         let statement = program.statements.get(0).unwrap();
         match &statement.kind {
-            StatementKind::Expression { expression } => match &expression.kind {
+            StatementKind::Expression(expression) => match &expression.kind {
                 ExpressionKind::IfConditional {
                     condition,
                     consequence,
@@ -1261,7 +1252,7 @@ mod tests {
         );
         let statement = program.statements.get(0).unwrap();
         match &statement.kind {
-            StatementKind::Expression { expression } => match &expression.kind {
+            StatementKind::Expression(expression) => match &expression.kind {
                 ExpressionKind::IfConditional {
                     condition,
                     consequence,
@@ -1309,7 +1300,7 @@ mod tests {
         );
         let statement = program.statements.get(0).unwrap();
         match &statement.kind {
-            StatementKind::Expression { expression } => match &expression.kind {
+            StatementKind::Expression(expression) => match &expression.kind {
                 ExpressionKind::FunctionLiteral { parameters, body } => {
                     assert_eq!(
                         parameters.len(),
@@ -1356,7 +1347,7 @@ mod tests {
         );
         let statement = program.statements.get(0).unwrap();
         match &statement.kind {
-            StatementKind::Expression { expression } => match &expression.kind {
+            StatementKind::Expression(expression) => match &expression.kind {
                 ExpressionKind::FunctionLiteral { parameters, body } => {
                     assert_eq!(
                         parameters.len(),
@@ -1399,7 +1390,7 @@ mod tests {
         );
         let statement = program.statements.get(0).unwrap();
         match &statement.kind {
-            StatementKind::Expression { expression } => match &expression.kind {
+            StatementKind::Expression(expression) => match &expression.kind {
                 ExpressionKind::FunctionLiteral { parameters, body } => {
                     assert_eq!(
                         parameters.len(),
@@ -1444,7 +1435,7 @@ mod tests {
         );
         let statement = program.statements.get(0).unwrap();
         match &statement.kind {
-            StatementKind::Expression { expression } => match &expression.kind {
+            StatementKind::Expression(expression) => match &expression.kind {
                 ExpressionKind::CallExpression {
                     function,
                     arguments,
