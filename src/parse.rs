@@ -17,33 +17,34 @@ pub mod ast {
         BooleanLiteral(bool),
         Identifier(lex::Token<'a>),
         InfixExpression {
-            left: Box<ExpressionNode<'a>>,
+            left: usize,
             operator: lex::Token<'a>,
-            right: Box<ExpressionNode<'a>>,
+            right: usize,
         },
         IntegerLiteral(i64),
         PrefixExpression {
             operator: lex::Token<'a>,
-            right: Box<ExpressionNode<'a>>,
+            right: usize,
         },
         IfConditional {
-            condition: Box<ExpressionNode<'a>>,
-            consequence: Box<StatementBlock<'a>>,
-            alternative: Option<Box<StatementBlock<'a>>>,
+            condition: usize,
+            consequence: usize,
+            alternative: Option<usize>,
         },
         FunctionLiteral {
             parameters: Vec<lex::Token<'a>>,
-            body: Box<StatementBlock<'a>>,
+            body: usize,
         },
         CallExpression {
-            function: Box<ExpressionNode<'a>>,
-            arguments: Vec<ExpressionNode<'a>>,
+            function: lex::Token<'a>,
+            arguments: Vec<usize>,
         },
     }
 
     #[derive(Debug)]
     pub struct ExpressionNode<'a> {
         pub token: lex::Token<'a>,
+        pub arena_ref: &'a Vec<Box<ExpressionNode<'a>>>,
         pub kind: ExpressionKind<'a>,
     }
 
@@ -110,12 +111,9 @@ pub mod ast {
 
     #[derive(Debug)]
     pub enum StatementKind<'a> {
-        Let {
-            name: lex::Token<'a>,
-            value: ExpressionNode<'a>,
-        },
-        Return(ExpressionNode<'a>),
-        Expression(ExpressionNode<'a>),
+        Let { name: lex::Token<'a>, value: usize },
+        Return(usize),
+        Expression(usize),
     }
 
     #[derive(Debug)]
@@ -179,6 +177,21 @@ pub mod ast {
     /// Root node of all Monkey ASTs
     pub struct Program<'a> {
         pub statements: Vec<StatementNode<'a>>,
+        arena: Vec<Box<dyn ASTNode>>,
+    }
+
+    impl<'a> Program<'a> {
+        pub fn new(statements: Vec<StatementNode<'a>>, arena: Vec<Box<dyn ASTNode>>) -> Self {
+            Self { statements, arena }
+        }
+
+        pub fn get_node(&self, index: usize) -> Result<Option<&Box<dyn ASTNode>>, &'static str> {
+            if index >= self.arena.len() {
+                Err("Impossible arena index provided")
+            } else {
+                Ok(self.arena.get(index))
+            }
+        }
     }
 
     impl<'a> fmt::Display for Program<'a> {
@@ -190,31 +203,34 @@ pub mod ast {
         }
     }
 
-    #[cfg(test)]
-    mod test {
-        use super::*;
-        #[test]
-        fn test_display_impl() {
-            let prog = Program {
-                statements: vec![StatementNode {
-                    token: lex::Token::with_str(lex::TokenType::LET, "let"),
-                    kind: StatementKind::Let {
-                        name: lex::Token::with_str(lex::TokenType::IDENT, "myVar"),
-                        value: ExpressionNode {
-                            token: lex::Token::with_str(lex::TokenType::IDENT, "anotherVar"),
-                            kind: ExpressionKind::Identifier(lex::Token::with_str(
-                                lex::TokenType::IDENT,
-                                "anotherVar",
-                            )),
-                        },
-                    },
-                }],
-            };
-
-            let prog_string = format!("{}", prog);
-            assert_eq!(prog_string, "let myVar = anotherVar;\n");
-        }
-    }
+    // #[cfg(test)]
+    // mod test {
+    // use super::*;
+    // #[test]
+    // fn test_display_impl() {
+    // let input = "let myvar = anotherVar;";
+    // let lexer = lex::Lexer::for_str(&input);
+    // let parser = super::Parser::for_lexer(lexer);
+    // let prog = Program {
+    // statements: vec![StatementNode {
+    // token: lex::Token::with_str(lex::TokenType::LET, "let"),
+    // kind: StatementKind::Let {
+    // name: lex::Token::with_str(lex::TokenType::IDENT, "myVar"),
+    // value: ExpressionNode {
+    // token: lex::Token::with_str(lex::TokenType::IDENT, "anotherVar"),
+    // kind: ExpressionKind::Identifier(lex::Token::with_str(
+    // lex::TokenType::IDENT,
+    // "anotherVar",
+    // )),
+    // },
+    // },
+    // }],
+    // };
+    //
+    // let prog_string = format!("{}", prog);
+    // assert_eq!(prog_string, "let myVar = anotherVar;\n");
+    // }
+    // }
 }
 
 use ast::*;
@@ -250,6 +266,7 @@ pub struct Parser<'a> {
     current_token: lex::Token<'a>,
     peek_token: Option<lex::Token<'a>>,
     errors: Vec<String>,
+    arena: Vec<Box<dyn ASTNode>>,
 }
 
 impl<'a> Parser<'a> {
@@ -262,7 +279,12 @@ impl<'a> Parser<'a> {
             current_token: first_token,
             peek_token: Some(second_token),
             errors: Vec::new(),
+            arena: Vec::new(),
         }
+    }
+    pub fn add_node(&mut self, node: Box<dyn ASTNode>) -> usize {
+        self.arena.push(node);
+        self.arena.len() - 1
     }
 
     pub fn advance_tokens(&mut self) -> lex::Token<'a> {
@@ -274,18 +296,16 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse(&mut self) -> Result<Program, String> {
-        let mut program = Program {
-            statements: Vec::new(),
-        };
+        let mut statements = Vec::new();
         while !self.is_current_token_of_type(EOF) {
             match self.parse_statement() {
-                Ok(stmt) => program.statements.push(stmt),
+                Ok(stmt) => statements.push(stmt),
                 Err(err) => self.errors.push(String::from(err)),
             }
             self.advance_tokens();
         }
         if self.errors.is_empty() {
-            Ok(program)
+            Ok(Program::new(statements, mem::take(&mut self.arena)))
         } else {
             let err_count = self.errors.len();
             let mut plural = "s";
@@ -352,7 +372,7 @@ impl<'a> Parser<'a> {
         self.current_token.token_type == expected_type
     }
 
-    fn parse_let_statement(&mut self) -> Result<StatementNode<'a>, String> {
+    fn parse_let_statement(&mut self) -> Result<usize, String> {
         let original_token = self.advance_tokens_if_next_of_type(IDENT)?;
         let ident_token = self.advance_tokens_if_next_of_type(ASSIGN)?;
         self.advance_tokens();
@@ -360,13 +380,13 @@ impl<'a> Parser<'a> {
         if self.is_next_token_of_type(SEMICOLON) {
             self.advance_tokens();
         }
-        Ok(StatementNode {
+        Ok(self.add_node(Box::new(StatementNode {
             token: original_token,
             kind: StatementKind::Let {
                 name: ident_token,
                 value,
             },
-        })
+        })))
     }
 
     fn parse_return_statement(&mut self) -> Result<StatementNode<'a>, String> {
@@ -400,10 +420,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_expression(
-        &mut self,
-        precedence: OperatorPrecedence,
-    ) -> Result<ExpressionNode<'a>, String> {
+    fn parse_expression(&mut self, precedence: OperatorPrecedence) -> Result<usize, String> {
         // This is the power-house of the Pratt-esque parsing
         // strategy that the book gets us to implement.
         // The key tactic is that we attempt to parse the expression as a prefix
@@ -430,7 +447,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn attempt_prefix_parse(&mut self) -> Result<Option<ExpressionNode<'a>>, String> {
+    fn attempt_prefix_parse(&mut self) -> Result<Option<usize>, String> {
         let parse_attempt = match &self.current_token.token_type {
             lex::TokenType::IDENT => self.parse_identifier()?,
             lex::TokenType::INT => self.parse_integer_literal()?,
@@ -579,25 +596,22 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_infix_expression(
-        &mut self,
-        lhs: ExpressionNode<'a>,
-    ) -> Result<ExpressionNode<'a>, String> {
+    fn parse_infix_expression(&mut self, lhs: usize) -> Result<usize, String> {
         let current_precedence = self.get_current_token_precedence();
         let expr_token = self.advance_tokens();
         match &expr_token.token_type {
             lex::TokenType::LPAREN => Ok(self.parse_call_expression(expr_token, lhs)?),
             _ => {
                 let rhs = self.parse_expression(current_precedence)?;
-
-                Ok(ExpressionNode {
+                Ok(self.add_node(Box::new(ExpressionNode {
                     token: expr_token.clone(),
+                    arena_ref: &self.arena,
                     kind: ExpressionKind::InfixExpression {
-                        left: Box::new(lhs),
+                        left: lhs,
                         operator: expr_token,
-                        right: Box::new(rhs),
+                        right: rhs,
                     },
-                })
+                })))
             }
         }
     }
@@ -615,7 +629,7 @@ impl<'a> Parser<'a> {
         Ok(StatementBlock::from_statements(statements))
     }
 
-    fn parse_function_literal(&mut self) -> Result<ExpressionNode<'a>, String> {
+    fn parse_function_literal(&mut self) -> Result<usize, String> {
         let original_token = self.advance_tokens_if_next_of_type(lex::TokenType::LPAREN)?;
         let parameters = self.parse_function_parameters()?;
 
@@ -649,7 +663,7 @@ impl<'a> Parser<'a> {
         &mut self,
         original_token: lex::Token<'a>,
         function: ExpressionNode<'a>,
-    ) -> Result<ExpressionNode<'a>, String> {
+    ) -> Result<usize, String> {
         let arguments = self.parse_call_arguments()?;
         Ok(ExpressionNode {
             token: original_token,
