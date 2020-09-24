@@ -4,11 +4,13 @@ use crate::lex;
 
 use crate::lex::TokenType::*;
 
+type Arena<'a> = Vec<Box<dyn ASTNode + 'a>>;
+
 pub mod ast {
-    use super::lex;
+    use super::{lex, Arena};
     use std::fmt;
 
-    pub trait ASTNode {
+    pub trait ASTNode: fmt::Debug {
         fn get_token_literal(&self) -> Option<&str>;
     }
 
@@ -44,7 +46,6 @@ pub mod ast {
     #[derive(Debug)]
     pub struct ExpressionNode<'a> {
         pub token: lex::Token<'a>,
-        pub arena_ref: &'a Vec<Box<ExpressionNode<'a>>>,
         pub kind: ExpressionKind<'a>,
     }
 
@@ -176,16 +177,19 @@ pub mod ast {
 
     /// Root node of all Monkey ASTs
     pub struct Program<'a> {
-        pub statements: Vec<StatementNode<'a>>,
-        arena: Vec<Box<dyn ASTNode>>,
+        pub statements: Vec<usize>,
+        arena: Arena<'a>,
     }
 
     impl<'a> Program<'a> {
-        pub fn new(statements: Vec<StatementNode<'a>>, arena: Vec<Box<dyn ASTNode>>) -> Self {
+        pub fn new(statements: Vec<usize>, arena: Vec<Box<dyn ASTNode>>) -> Self {
             Self { statements, arena }
         }
 
-        pub fn get_node(&self, index: usize) -> Result<Option<&Box<dyn ASTNode>>, &'static str> {
+        pub fn get_node(
+            &self,
+            index: usize,
+        ) -> Result<Option<&Box<dyn ASTNode + 'a>>, &'static str> {
             if index >= self.arena.len() {
                 Err("Impossible arena index provided")
             } else {
@@ -266,7 +270,7 @@ pub struct Parser<'a> {
     current_token: lex::Token<'a>,
     peek_token: Option<lex::Token<'a>>,
     errors: Vec<String>,
-    arena: Vec<Box<dyn ASTNode>>,
+    arena: Arena<'a>,
 }
 
 impl<'a> Parser<'a> {
@@ -282,6 +286,7 @@ impl<'a> Parser<'a> {
             arena: Vec::new(),
         }
     }
+
     pub fn add_node(&mut self, node: Box<dyn ASTNode>) -> usize {
         self.arena.push(node);
         self.arena.len() - 1
@@ -321,7 +326,7 @@ impl<'a> Parser<'a> {
         &self.errors
     }
 
-    fn parse_statement(&mut self) -> Result<StatementNode<'a>, String> {
+    fn parse_statement(&mut self) -> Result<usize, String> {
         match self.current_token.token_type {
             LET => self.parse_let_statement(),
             RETURN => self.parse_return_statement(),
@@ -389,19 +394,19 @@ impl<'a> Parser<'a> {
         })))
     }
 
-    fn parse_return_statement(&mut self) -> Result<StatementNode<'a>, String> {
+    fn parse_return_statement(&mut self) -> Result<usize, String> {
         let original_token = self.advance_tokens();
         let value = self.parse_expression(OperatorPrecedence::LOWEST)?;
         if self.is_next_token_of_type(SEMICOLON) {
             self.advance_tokens();
         }
-        Ok(StatementNode {
+        Ok(self.add_node(Box::new(StatementNode {
             token: original_token,
             kind: StatementKind::Return(value),
-        })
+        })))
     }
 
-    fn attempt_parse_expression_statement(&mut self) -> Result<StatementNode<'a>, String> {
+    fn attempt_parse_expression_statement(&mut self) -> Result<usize, String> {
         let original_token = self.current_token.clone();
         let result = self.parse_expression(OperatorPrecedence::LOWEST)?;
 
@@ -414,10 +419,10 @@ impl<'a> Parser<'a> {
             None => {}
         }
 
-        Ok(StatementNode {
+        Ok(self.add_node(Box::new(StatementNode {
             token: original_token,
             kind: StatementKind::Expression(result),
-        })
+        })))
     }
 
     fn parse_expression(&mut self, precedence: OperatorPrecedence) -> Result<usize, String> {
@@ -481,28 +486,27 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_identifier(&mut self) -> Result<ExpressionNode<'a>, String> {
-        let token = self.current_token.clone();
-        Ok(ExpressionNode {
-            token: token.clone(),
-            kind: ExpressionKind::Identifier(token),
-        })
+    fn parse_identifier(&mut self) -> Result<usize, String> {
+        Ok(self.add_node(Box::new(ExpressionNode {
+            token: self.current_token.clone(),
+            kind: ExpressionKind::Identifier(self.current_token),
+        })))
     }
 
-    fn parse_integer_literal(&mut self) -> Result<ExpressionNode<'a>, String> {
+    fn parse_integer_literal(&mut self) -> Result<usize, String> {
         let token = self.current_token.clone();
         let lit = token.get_literal().unwrap();
         let attempted_parse = lit.parse();
         match attempted_parse {
-            Ok(value) => Ok(ExpressionNode {
+            Ok(value) => Ok(self.add_node(Box::new(ExpressionNode {
                 token,
                 kind: ExpressionKind::IntegerLiteral(value),
-            }),
+            }))),
             Err(_err) => Err(format!("Cannot parse '{}' to i64", lit)),
         }
     }
 
-    fn parse_boolean_literal(&mut self) -> Result<ExpressionNode<'a>, String> {
+    fn parse_boolean_literal(&mut self) -> Result<usize, String> {
         let token = self.current_token.clone();
         let value = match &token.token_type {
             lex::TokenType::TRUE => true,
@@ -515,13 +519,13 @@ impl<'a> Parser<'a> {
             }
         };
 
-        Ok(ExpressionNode {
+        Ok(self.add_node(Box::new(ExpressionNode {
             token,
             kind: ExpressionKind::BooleanLiteral(value),
-        })
+        })))
     }
 
-    fn parse_grouped_expression(&mut self) -> Result<ExpressionNode<'a>, String> {
+    fn parse_grouped_expression(&mut self) -> Result<usize, String> {
         self.advance_tokens();
         let expr = self.parse_expression(OperatorPrecedence::LOWEST);
         if !self.is_next_token_of_type(lex::TokenType::RPAREN) {
@@ -537,7 +541,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_if_expression(&mut self) -> Result<ExpressionNode<'a>, String> {
+    fn parse_if_expression(&mut self) -> Result<usize, String> {
         if !self.is_next_token_of_type(lex::TokenType::LPAREN) {
             return Err(format!("Expecting LPAREN, got {:?}", self.peek_token));
         }
@@ -563,37 +567,37 @@ impl<'a> Parser<'a> {
             self.advance_tokens();
 
             let alternative = self.parse_block_statement()?;
-            Ok(ExpressionNode {
+            Ok(self.add_node(Box::new(ExpressionNode {
                 token: original_token,
                 kind: ExpressionKind::IfConditional {
-                    condition: Box::new(condition),
-                    consequence: Box::new(consequence),
-                    alternative: Some(Box::new(alternative)),
+                    condition,
+                    consequence,
+                    alternative: Some(alternative),
                 },
-            })
+            })))
         } else {
-            Ok(ExpressionNode {
+            Ok(self.add_node(Box::new(ExpressionNode {
                 token: original_token,
                 kind: ExpressionKind::IfConditional {
-                    condition: Box::new(condition),
-                    consequence: Box::new(consequence),
+                    condition,
+                    consequence,
                     alternative: None,
                 },
-            })
+            })))
         }
     }
 
-    fn parse_prefix_expression(&mut self) -> Result<ExpressionNode<'a>, String> {
+    fn parse_prefix_expression(&mut self) -> Result<usize, String> {
         let operator_token = self.advance_tokens();
 
         let rhs = self.parse_expression(OperatorPrecedence::PREFIX)?;
-        Ok(ExpressionNode {
+        Ok(self.add_node(Box::new(ExpressionNode {
             token: operator_token.clone(),
             kind: ExpressionKind::PrefixExpression {
                 operator: operator_token,
-                right: Box::new(rhs),
+                right: rhs,
             },
-        })
+        })))
     }
 
     fn parse_infix_expression(&mut self, lhs: usize) -> Result<usize, String> {
@@ -605,7 +609,6 @@ impl<'a> Parser<'a> {
                 let rhs = self.parse_expression(current_precedence)?;
                 Ok(self.add_node(Box::new(ExpressionNode {
                     token: expr_token.clone(),
-                    arena_ref: &self.arena,
                     kind: ExpressionKind::InfixExpression {
                         left: lhs,
                         operator: expr_token,
@@ -616,7 +619,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_block_statement(&mut self) -> Result<StatementBlock<'a>, String> {
+    fn parse_block_statement(&mut self) -> Result<usize, String> {
         let mut statements = Vec::new();
         self.advance_tokens();
         while !self.is_current_token_of_type(lex::TokenType::RBRACE)
@@ -635,13 +638,10 @@ impl<'a> Parser<'a> {
 
         self.advance_tokens_if_next_of_type(lex::TokenType::LBRACE)?;
         let body = self.parse_block_statement()?;
-        Ok(ExpressionNode {
+        Ok(self.add_node(Box::new(ExpressionNode {
             token: original_token,
-            kind: ExpressionKind::FunctionLiteral {
-                parameters,
-                body: Box::new(body),
-            },
-        })
+            kind: ExpressionKind::FunctionLiteral { parameters, body },
+        })))
     }
 
     fn parse_function_parameters(&mut self) -> Result<Vec<lex::Token<'a>>, String> {
@@ -665,13 +665,13 @@ impl<'a> Parser<'a> {
         function: ExpressionNode<'a>,
     ) -> Result<usize, String> {
         let arguments = self.parse_call_arguments()?;
-        Ok(ExpressionNode {
+        Ok(self.add_node(Box::new(ExpressionNode {
             token: original_token,
             kind: ExpressionKind::CallExpression {
                 function: Box::new(function),
                 arguments,
             },
-        })
+        })))
     }
 
     fn parse_call_arguments(&mut self) -> Result<Vec<ExpressionNode<'a>>, String> {
