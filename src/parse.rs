@@ -9,9 +9,33 @@ type Arena<'a> = Vec<Box<dyn ASTNode + 'a>>;
 pub mod ast {
     use super::{lex, Arena};
     use std::fmt;
+    use std::ops::Deref;
 
-    pub trait ASTNode: fmt::Debug {
+    pub trait ASTNode: fmt::Debug + fmt::Display {
         fn get_token_literal(&self) -> Option<&str>;
+        fn get_expression_kind(&self) -> Option<&ExpressionKind>;
+        fn get_statement_kind(&self) -> Option<&StatementKind>;
+    }
+
+    #[derive(Debug)]
+    pub struct NodeRef<'a> {
+        index: usize,
+        arena: &'a Arena<'a>,
+    }
+
+    impl<'a> Deref for NodeRef<'a> {
+        type Target = Box<dyn ASTNode + 'a>;
+
+        fn deref<'b>(&'b self) -> &'b Self::Target {
+            self.arena.get(self.index).unwrap()
+        }
+    }
+
+    impl<'a> fmt::Display for NodeRef<'a> {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            // Delegate to referenced ASTNode
+            self.deref().fmt(f)
+        }
     }
 
     #[derive(Debug)]
@@ -19,27 +43,27 @@ pub mod ast {
         BooleanLiteral(bool),
         Identifier(lex::Token<'a>),
         InfixExpression {
-            left: usize,
+            left: NodeRef<'a>,
             operator: lex::Token<'a>,
-            right: usize,
+            right: NodeRef<'a>,
         },
         IntegerLiteral(i64),
         PrefixExpression {
             operator: lex::Token<'a>,
-            right: usize,
+            right: NodeRef<'a>,
         },
         IfConditional {
-            condition: usize,
-            consequence: usize,
-            alternative: Option<usize>,
+            condition: NodeRef<'a>,
+            consequence: NodeRef<'a>,
+            alternative: Option<NodeRef<'a>>,
         },
         FunctionLiteral {
             parameters: Vec<lex::Token<'a>>,
-            body: usize,
+            body: NodeRef<'a>,
         },
         CallExpression {
-            function: lex::Token<'a>,
-            arguments: Vec<usize>,
+            function: &'a str,
+            arguments: Vec<NodeRef<'a>>,
         },
     }
 
@@ -52,6 +76,12 @@ pub mod ast {
     impl ASTNode for ExpressionNode<'_> {
         fn get_token_literal(&self) -> Option<&str> {
             self.token.get_literal()
+        }
+        fn get_statement_kind(&self) -> Option<&StatementKind> {
+            None
+        }
+        fn get_expression_kind(&self) -> Option<&ExpressionKind> {
+            Some(&self.kind)
         }
     }
 
@@ -112,37 +142,13 @@ pub mod ast {
 
     #[derive(Debug)]
     pub enum StatementKind<'a> {
-        Let { name: lex::Token<'a>, value: usize },
-        Return(usize),
-        Expression(usize),
-    }
-
-    #[derive(Debug)]
-    pub struct StatementBlock<'a> {
-        statements: Vec<StatementNode<'a>>,
-    }
-
-    impl<'a> StatementBlock<'a> {
-        pub fn from_statements(statements: Vec<StatementNode<'a>>) -> Self {
-            Self { statements }
-        }
-
-        pub fn get_statements(&self) -> &Vec<StatementNode<'a>> {
-            &self.statements
-        }
-
-        pub fn take_statements(&mut self) -> Vec<StatementNode<'a>> {
-            std::mem::replace(&mut self.statements, Vec::new())
-        }
-    }
-
-    impl<'a> fmt::Display for StatementBlock<'a> {
-        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            for statement in &self.statements {
-                write!(f, "{}", statement)?;
-            }
-            write!(f, "")
-        }
+        Let {
+            name: lex::Token<'a>,
+            value: NodeRef<'a>,
+        },
+        Return(NodeRef<'a>),
+        Expression(NodeRef<'a>),
+        Block(Vec<NodeRef<'a>>),
     }
 
     #[derive(Debug)]
@@ -154,6 +160,12 @@ pub mod ast {
     impl<'a> ASTNode for StatementNode<'a> {
         fn get_token_literal(&self) -> Option<&str> {
             self.token.get_literal()
+        }
+        fn get_statement_kind(&self) -> Option<&StatementKind> {
+            Some(&self.kind)
+        }
+        fn get_expression_kind(&self) -> Option<&ExpressionKind> {
+            None
         }
     }
 
@@ -171,30 +183,25 @@ pub mod ast {
                     write!(f, "{} {};", self.get_token_literal().unwrap(), value)
                 }
                 StatementKind::Expression(expression) => write!(f, "{}", expression),
+                StatementKind::Block(statements) => {
+                    for statement in statements {
+                        write!(f, "{}", statement)?;
+                    }
+                    write!(f, "")
+                }
             }
         }
     }
 
     /// Root node of all Monkey ASTs
     pub struct Program<'a> {
-        pub statements: Vec<usize>,
+        pub statements: Vec<NodeRef<'a>>,
         arena: Arena<'a>,
     }
 
     impl<'a> Program<'a> {
-        pub fn new(statements: Vec<usize>, arena: Vec<Box<dyn ASTNode>>) -> Self {
+        pub fn new(statements: Vec<NodeRef<'a>>, arena: Vec<Box<dyn ASTNode + 'a>>) -> Self {
             Self { statements, arena }
-        }
-
-        pub fn get_node(
-            &self,
-            index: usize,
-        ) -> Result<Option<&Box<dyn ASTNode + 'a>>, &'static str> {
-            if index >= self.arena.len() {
-                Err("Impossible arena index provided")
-            } else {
-                Ok(self.arena.get(index))
-            }
         }
     }
 
@@ -287,12 +294,15 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn add_node(&mut self, node: Box<dyn ASTNode>) -> usize {
+    pub fn add_node(&'a mut self, node: Box<dyn ASTNode + 'a>) -> NodeRef<'a> {
         self.arena.push(node);
-        self.arena.len() - 1
+        NodeRef {
+            index: self.arena.len() - 1,
+            arena: &self.arena,
+        }
     }
 
-    pub fn advance_tokens(&mut self) -> lex::Token<'a> {
+    pub fn advance_tokens(&'a mut self) -> lex::Token<'a> {
         let next = self.lexer.next_token().expect("Unable to advance token");
         let mut peek_unwrapped: lex::Token = self.peek_token.take().unwrap();
         mem::swap(&mut peek_unwrapped, &mut self.current_token);
@@ -300,7 +310,7 @@ impl<'a> Parser<'a> {
         peek_unwrapped
     }
 
-    pub fn parse(&mut self) -> Result<Program, String> {
+    pub fn parse(&'a mut self) -> Result<Program<'a>, String> {
         let mut statements = Vec::new();
         while !self.is_current_token_of_type(EOF) {
             match self.parse_statement() {
@@ -326,7 +336,7 @@ impl<'a> Parser<'a> {
         &self.errors
     }
 
-    fn parse_statement(&mut self) -> Result<usize, String> {
+    fn parse_statement(&'a mut self) -> Result<NodeRef<'a>, String> {
         match self.current_token.token_type {
             LET => self.parse_let_statement(),
             RETURN => self.parse_return_statement(),
@@ -342,7 +352,7 @@ impl<'a> Parser<'a> {
     }
 
     fn advance_tokens_if_next_of_type(
-        &mut self,
+        &'a mut self,
         expected_type: lex::TokenType,
     ) -> Result<lex::Token<'a>, String> {
         if let Some(t) = &self.peek_token {
@@ -377,7 +387,7 @@ impl<'a> Parser<'a> {
         self.current_token.token_type == expected_type
     }
 
-    fn parse_let_statement(&mut self) -> Result<usize, String> {
+    fn parse_let_statement(&'a mut self) -> Result<NodeRef<'a>, String> {
         let original_token = self.advance_tokens_if_next_of_type(IDENT)?;
         let ident_token = self.advance_tokens_if_next_of_type(ASSIGN)?;
         self.advance_tokens();
@@ -394,7 +404,7 @@ impl<'a> Parser<'a> {
         })))
     }
 
-    fn parse_return_statement(&mut self) -> Result<usize, String> {
+    fn parse_return_statement(&'a mut self) -> Result<NodeRef<'a>, String> {
         let original_token = self.advance_tokens();
         let value = self.parse_expression(OperatorPrecedence::LOWEST)?;
         if self.is_next_token_of_type(SEMICOLON) {
@@ -406,7 +416,7 @@ impl<'a> Parser<'a> {
         })))
     }
 
-    fn attempt_parse_expression_statement(&mut self) -> Result<usize, String> {
+    fn attempt_parse_expression_statement(&'a mut self) -> Result<NodeRef<'a>, String> {
         let original_token = self.current_token.clone();
         let result = self.parse_expression(OperatorPrecedence::LOWEST)?;
 
@@ -425,7 +435,10 @@ impl<'a> Parser<'a> {
         })))
     }
 
-    fn parse_expression(&mut self, precedence: OperatorPrecedence) -> Result<usize, String> {
+    fn parse_expression(
+        &'a mut self,
+        precedence: OperatorPrecedence,
+    ) -> Result<NodeRef<'a>, String> {
         // This is the power-house of the Pratt-esque parsing
         // strategy that the book gets us to implement.
         // The key tactic is that we attempt to parse the expression as a prefix
@@ -452,7 +465,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn attempt_prefix_parse(&mut self) -> Result<Option<usize>, String> {
+    fn attempt_prefix_parse(&'a mut self) -> Result<Option<NodeRef<'a>>, String> {
         let parse_attempt = match &self.current_token.token_type {
             lex::TokenType::IDENT => self.parse_identifier()?,
             lex::TokenType::INT => self.parse_integer_literal()?,
@@ -486,14 +499,14 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_identifier(&mut self) -> Result<usize, String> {
+    fn parse_identifier(&'a mut self) -> Result<NodeRef<'a>, String> {
         Ok(self.add_node(Box::new(ExpressionNode {
             token: self.current_token.clone(),
             kind: ExpressionKind::Identifier(self.current_token),
         })))
     }
 
-    fn parse_integer_literal(&mut self) -> Result<usize, String> {
+    fn parse_integer_literal(&'a mut self) -> Result<NodeRef<'a>, String> {
         let token = self.current_token.clone();
         let lit = token.get_literal().unwrap();
         let attempted_parse = lit.parse();
@@ -506,7 +519,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_boolean_literal(&mut self) -> Result<usize, String> {
+    fn parse_boolean_literal(&'a mut self) -> Result<NodeRef<'a>, String> {
         let token = self.current_token.clone();
         let value = match &token.token_type {
             lex::TokenType::TRUE => true,
@@ -525,7 +538,7 @@ impl<'a> Parser<'a> {
         })))
     }
 
-    fn parse_grouped_expression(&mut self) -> Result<usize, String> {
+    fn parse_grouped_expression(&'a mut self) -> Result<NodeRef<'a>, String> {
         self.advance_tokens();
         let expr = self.parse_expression(OperatorPrecedence::LOWEST);
         if !self.is_next_token_of_type(lex::TokenType::RPAREN) {
@@ -541,7 +554,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_if_expression(&mut self) -> Result<usize, String> {
+    fn parse_if_expression(&'a mut self) -> Result<NodeRef<'a>, String> {
         if !self.is_next_token_of_type(lex::TokenType::LPAREN) {
             return Err(format!("Expecting LPAREN, got {:?}", self.peek_token));
         }
@@ -587,7 +600,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_prefix_expression(&mut self) -> Result<usize, String> {
+    fn parse_prefix_expression(&'a mut self) -> Result<NodeRef<'a>, String> {
         let operator_token = self.advance_tokens();
 
         let rhs = self.parse_expression(OperatorPrecedence::PREFIX)?;
@@ -600,7 +613,7 @@ impl<'a> Parser<'a> {
         })))
     }
 
-    fn parse_infix_expression(&mut self, lhs: usize) -> Result<usize, String> {
+    fn parse_infix_expression(&'a mut self, lhs: NodeRef<'a>) -> Result<NodeRef<'a>, String> {
         let current_precedence = self.get_current_token_precedence();
         let expr_token = self.advance_tokens();
         match &expr_token.token_type {
@@ -619,9 +632,9 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_block_statement(&mut self) -> Result<usize, String> {
+    fn parse_block_statement(&'a mut self) -> Result<NodeRef<'a>, String> {
         let mut statements = Vec::new();
-        self.advance_tokens();
+        let token = self.advance_tokens();
         while !self.is_current_token_of_type(lex::TokenType::RBRACE)
             && !self.is_current_token_of_type(lex::TokenType::EOF)
         {
@@ -629,10 +642,13 @@ impl<'a> Parser<'a> {
             statements.push(statement);
             self.advance_tokens();
         }
-        Ok(StatementBlock::from_statements(statements))
+        Ok(self.add_node(Box::new(StatementNode {
+            token,
+            kind: StatementKind::Block(statements),
+        })))
     }
 
-    fn parse_function_literal(&mut self) -> Result<usize, String> {
+    fn parse_function_literal(&'a mut self) -> Result<NodeRef<'a>, String> {
         let original_token = self.advance_tokens_if_next_of_type(lex::TokenType::LPAREN)?;
         let parameters = self.parse_function_parameters()?;
 
@@ -644,7 +660,7 @@ impl<'a> Parser<'a> {
         })))
     }
 
-    fn parse_function_parameters(&mut self) -> Result<Vec<lex::Token<'a>>, String> {
+    fn parse_function_parameters(&'a mut self) -> Result<Vec<lex::Token<'a>>, String> {
         let mut params = Vec::new();
         if self.is_next_token_of_type(lex::TokenType::RPAREN) {
             self.advance_tokens();
@@ -660,21 +676,22 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_call_expression(
-        &mut self,
+        &'a mut self,
         original_token: lex::Token<'a>,
-        function: ExpressionNode<'a>,
-    ) -> Result<usize, String> {
+        function: NodeRef<'a>,
+    ) -> Result<NodeRef<'a>, String> {
         let arguments = self.parse_call_arguments()?;
+        let fn_name = function.get_token_literal().unwrap();
         Ok(self.add_node(Box::new(ExpressionNode {
-            token: original_token,
+            token: original_token.clone(),
             kind: ExpressionKind::CallExpression {
-                function: Box::new(function),
+                function: fn_name,
                 arguments,
             },
         })))
     }
 
-    fn parse_call_arguments(&mut self) -> Result<Vec<ExpressionNode<'a>>, String> {
+    fn parse_call_arguments(&'a mut self) -> Result<Vec<NodeRef<'a>>, String> {
         let mut params = Vec::new();
         if self.is_next_token_of_type(lex::TokenType::RPAREN) {
             self.advance_tokens();
@@ -702,55 +719,71 @@ mod tests {
         assert_eq!(parser.peek_token.unwrap().get_literal().unwrap(), "x");
     }
 
-    fn check_is_identifier(name: &ExpressionNode, expected_name: &str) {
-        match &name.kind {
-            ExpressionKind::Identifier(name) => {
-                assert_eq!(
-                    name, name,
-                    "Expecting ident '{}', got '{}'",
-                    expected_name, name
-                );
+    fn check_is_identifier(name: &NodeRef, expected_name: &str) {
+        if let Some(kind) = name.get_expression_kind() {
+            match &kind {
+                ExpressionKind::Identifier(name) => {
+                    assert_eq!(
+                        name, name,
+                        "Expecting ident '{}', got '{}'",
+                        expected_name, name
+                    );
+                }
+                _ => assert!(false, "Expression is not an Identifier"),
             }
-            _ => assert!(false, "Expression is not an Identifier"),
-        }
-    }
-
-    fn check_is_int_literal(expression: &ExpressionNode, expected_value: i64) {
-        match expression.kind {
-            ExpressionKind::IntegerLiteral(value) => {
-                assert_eq!(
-                    value, expected_value,
-                    "Expecting value '{}', got '{}'",
-                    expected_value, value
-                );
-            }
-            _ => assert!(false, "Expression is not an IntegerLiteral"),
-        }
-    }
-
-    fn check_is_boolean(expression: &ExpressionNode, expected_value: bool) {
-        match expression.kind {
-            ExpressionKind::BooleanLiteral(value) => {
-                assert_eq!(
-                    value, expected_value,
-                    "Expecting {}, got {}",
-                    expected_value, value
-                );
-            }
-            _ => assert!(false, "Expression is not a BooleanLiteral"),
-        }
-    }
-
-    fn check_infix_expression(expression: &ExpressionNode, expected_str: &str) {
-        if let ExpressionKind::InfixExpression {
-            left: _,
-            operator: _,
-            right: _,
-        } = expression.kind
-        {
-            assert_eq!(format!("{}", expression), expected_str);
         } else {
-            assert!(false, "Expression is not an InfixExpression");
+            assert!(false, "Node is not an Expression")
+        }
+    }
+
+    fn check_is_int_literal(expression: &NodeRef, expected_value: i64) {
+        if let Some(kind) = expression.get_expression_kind() {
+            match kind {
+                ExpressionKind::IntegerLiteral(value) => {
+                    assert_eq!(
+                        *value, expected_value,
+                        "Expecting value '{}', got '{}'",
+                        expected_value, value
+                    );
+                }
+                _ => assert!(false, "Expression is not an IntegerLiteral"),
+            }
+        } else {
+            assert!(false, "Node is not an Expression")
+        }
+    }
+
+    fn check_is_boolean(expression: &NodeRef, expected_value: bool) {
+        if let Some(kind) = expression.get_expression_kind() {
+            match kind {
+                ExpressionKind::BooleanLiteral(value) => {
+                    assert_eq!(
+                        *value, expected_value,
+                        "Expecting {}, got {}",
+                        expected_value, value
+                    );
+                }
+                _ => assert!(false, "Expression is not a BooleanLiteral"),
+            }
+        } else {
+            assert!(false, "Node is not an Expression")
+        }
+    }
+
+    fn check_infix_expression(expression: &NodeRef, expected_str: &str) {
+        if let Some(kind) = expression.get_expression_kind() {
+            if let ExpressionKind::InfixExpression {
+                left: _,
+                operator: _,
+                right: _,
+            } = kind
+            {
+                assert_eq!(format!("{}", expression), expected_str);
+            } else {
+                assert!(false, "Expression is not an InfixExpression");
+            }
+        } else {
+            assert!(false, "Node not an expression")
         }
     }
 
@@ -778,13 +811,16 @@ mod tests {
                         "Expecting program to contain 1 statement, got {}",
                         length
                     );
-                    let statement = program.statements.get(0).unwrap();
-                    match &statement.kind {
+                    let statement = *program.statements.get(0).unwrap();
+                    if let Some(kind) = statement.get_statement_kind() {
+                    match kind {
                         StatementKind::Let { name, value } => {
                             assert_eq!(name.get_literal().unwrap(), expected_ident);
                             $checkfn(value, expected_value);
                         }
                         _ => assert!(false, "Encountered unexpected non-let statement"),
+                    }} else {
+                        assert!(false, "Encountered unexpected expression");
                     }
 
                 })*
@@ -825,7 +861,7 @@ mod tests {
         let expected_idents = vec![("x", 5), ("y", 10), ("foobar", 838383)];
         let pairs = program.statements.iter().zip(expected_idents);
         for (statement, ident) in pairs {
-            match &statement.kind {
+            match &statement.get_statement_kind().unwrap() {
                 StatementKind::Let { name, value } => {
                     assert_eq!(name.get_literal().unwrap(), ident.0);
                     check_is_int_literal(value, ident.1);
@@ -892,7 +928,7 @@ mod tests {
                         length
                     );
                     let statement = program.statements.get(0).unwrap();
-                    match &statement.kind {
+                    match &statement.get_statement_kind().unwrap() {
                         StatementKind::Return ( value ) => {
                             $checkfn(value, expected_value);
                         }
@@ -935,7 +971,7 @@ mod tests {
         );
         let expected_ints = vec![5, 10, 838383];
         for (statement, expected) in program.statements.iter().zip(expected_ints) {
-            match &statement.kind {
+            match &statement.get_statement_kind().unwrap() {
                 StatementKind::Return(value) => {
                     assert_eq!(
                         statement.get_token_literal().unwrap(),
@@ -969,7 +1005,7 @@ mod tests {
             length
         );
         let statement = program.statements.get(0).unwrap();
-        match &statement.kind {
+        match &statement.get_statement_kind().unwrap() {
             StatementKind::Expression(expression) => {
                 check_is_identifier(expression, "foobar");
             }
@@ -997,7 +1033,7 @@ mod tests {
             length
         );
         let statement = program.statements.get(0).unwrap();
-        match &statement.kind {
+        match &statement.get_statement_kind().unwrap() {
             StatementKind::Expression(expression) => {
                 check_is_int_literal(expression, 5);
             }
@@ -1031,8 +1067,8 @@ mod tests {
                     );
                     let statement = program.statements.get(0).unwrap();
 
-                    match &statement.kind {
-                        StatementKind::Expression ( expression ) => match &expression.kind {
+                    match &statement.get_statement_kind().unwrap() {
+                        StatementKind::Expression ( expression ) => match &expression.get_expression_kind().unwrap() {
                             ExpressionKind::PrefixExpression { operator, right } => {
                                 assert_eq!(
                                     operator.get_literal().unwrap(),
@@ -1085,15 +1121,15 @@ mod tests {
                     );
                     let statement = program.statements.get(0).unwrap();
 
-                    match &statement.kind {
-                        StatementKind::Expression ( expression ) => match &expression.kind {
+                    match &statement.get_statement_kind().unwrap() {
+                        StatementKind::Expression ( expression ) => match &expression.get_expression_kind().unwrap() {
                             ExpressionKind::InfixExpression { left, operator, right } => {
                                 assert_eq!(
                                     operator.get_literal().unwrap(),
                                     expected_operator
                                 );
-                                $checkfn(&*left, expected_lhs);
-                                $checkfn(&*right, expected_rhs);
+                                $checkfn(left, expected_lhs);
+                                $checkfn(right, expected_rhs);
                             }
                             _ => {
                                 assert!(false, "Statement expression is not infix op expression");
@@ -1192,14 +1228,14 @@ mod tests {
             length
         );
         let statement_true = program.statements.get(0).unwrap();
-        match &statement_true.kind {
+        match &statement_true.get_statement_kind().unwrap() {
             StatementKind::Expression(expression) => {
                 check_is_boolean(expression, true);
             }
             _ => assert!(false, "Encountered unexpected non-expression statement"),
         }
         let statement_false = program.statements.get(1).unwrap();
-        match &statement_false.kind {
+        match &statement_false.get_statement_kind().unwrap() {
             StatementKind::Expression(expression) => {
                 check_is_boolean(expression, false);
             }
@@ -1227,20 +1263,32 @@ mod tests {
             length
         );
         let statement = program.statements.get(0).unwrap();
-        match &statement.kind {
-            StatementKind::Expression(expression) => match &expression.kind {
-                ExpressionKind::IfConditional {
-                    condition,
-                    consequence,
-                    alternative,
-                } => {
-                    assert_eq!(format!("{}", condition), "(x < y)");
-                    assert_eq!(consequence.get_statements().len(), 1);
-                    assert_eq!(format!("{}", consequence), "x");
-                    assert!(alternative.is_none())
+        match &statement.get_statement_kind().unwrap() {
+            StatementKind::Expression(expression) => {
+                match &expression.get_expression_kind().unwrap() {
+                    ExpressionKind::IfConditional {
+                        condition,
+                        consequence,
+                        alternative,
+                    } => {
+                        assert_eq!(format!("{}", condition), "(x < y)");
+                        if let StatementKind::Block(statements) =
+                            *consequence.get_statement_kind().unwrap()
+                        {
+                            assert_eq!(statements.len(), 1);
+                            assert_eq!(format!("{}", consequence), "x");
+                        } else {
+                            assert!(false, "Consequence not a block statement");
+                        }
+                        assert!(alternative.is_none())
+                    }
+                    _ => assert!(
+                        false,
+                        "Expecting IfConditional, got {:?}",
+                        expression.get_expression_kind()
+                    ),
                 }
-                _ => assert!(false, "Expecting IfConditional, got {:?}", expression.kind),
-            },
+            }
             _ => assert!(false, "Encountered unexpected non-expression statement"),
         }
     }
@@ -1265,30 +1313,40 @@ mod tests {
             length
         );
         let statement = program.statements.get(0).unwrap();
-        match &statement.kind {
-            StatementKind::Expression(expression) => match &expression.kind {
-                ExpressionKind::IfConditional {
-                    condition,
-                    consequence,
-                    alternative,
-                } => {
-                    assert_eq!(format!("{}", condition), "(x < y)");
-                    assert_eq!(consequence.get_statements().len(), 1);
-                    assert_eq!(
-                        format!("{}", consequence.get_statements().get(0).unwrap()),
-                        "x"
-                    );
-                    assert_eq!(format!("{}", consequence), "x");
-                    match alternative {
-                        Some(a) => {
-                            assert_eq!(a.get_statements().len(), 1);
-                            assert_eq!(format!("{}", a.get_statements().get(0).unwrap()), "y")
+        match statement.get_statement_kind().unwrap() {
+            StatementKind::Expression(expression) => {
+                match expression.get_expression_kind().unwrap() {
+                    ExpressionKind::IfConditional {
+                        condition,
+                        consequence,
+                        alternative,
+                    } => {
+                        assert_eq!(format!("{}", condition), "(x < y)");
+                        if let StatementKind::Block(statements) =
+                            *consequence.get_statement_kind().unwrap()
+                        {
+                            assert_eq!(statements.len(), 1);
+                            assert_eq!(format!("{}", statements.get(0).unwrap()), "x");
+                            assert_eq!(format!("{}", consequence), "x");
+                        } else {
+                            assert!(false, "Consequence not a block statement");
                         }
-                        None => assert!(false, "Alternative not present"),
+                        if let StatementKind::Block(statements) =
+                            *alternative.unwrap().get_statement_kind().unwrap()
+                        {
+                            assert_eq!(statements.len(), 1);
+                            assert_eq!(format!("{}", statements.get(0).unwrap()), "y")
+                        } else {
+                            assert!(false, "Alternative not a block statement");
+                        }
                     }
+                    _ => assert!(
+                        false,
+                        "Expecting IfConditional, got {:?}",
+                        expression.get_expression_kind().unwrap()
+                    ),
                 }
-                _ => assert!(false, "Expecting IfConditional, got {:?}", expression.kind),
-            },
+            }
             _ => assert!(false, "Encountered unexpected non-expression statement"),
         }
     }
@@ -1313,29 +1371,34 @@ mod tests {
             length
         );
         let statement = program.statements.get(0).unwrap();
-        match &statement.kind {
-            StatementKind::Expression(expression) => match &expression.kind {
-                ExpressionKind::FunctionLiteral { parameters, body } => {
-                    assert_eq!(
-                        parameters.len(),
-                        2,
-                        "Expecting two params, got {:?}",
-                        parameters
-                    );
-                    assert_eq!(parameters.get(0).unwrap().get_literal().unwrap(), "x");
-                    assert_eq!(parameters.get(1).unwrap().get_literal().unwrap(), "y");
-                    assert_eq!(body.get_statements().len(), 1);
-                    assert_eq!(
-                        format!("{}", body.get_statements().get(0).unwrap()),
-                        "(x + y)"
-                    )
+        match statement.get_statement_kind().unwrap() {
+            StatementKind::Expression(expression) => {
+                match expression.get_expression_kind().unwrap() {
+                    ExpressionKind::FunctionLiteral { parameters, body } => {
+                        assert_eq!(
+                            parameters.len(),
+                            2,
+                            "Expecting two params, got {:?}",
+                            parameters
+                        );
+                        assert_eq!(parameters.get(0).unwrap().get_literal().unwrap(), "x");
+                        assert_eq!(parameters.get(1).unwrap().get_literal().unwrap(), "y");
+                        if let StatementKind::Block(statements) =
+                            *body.get_statement_kind().unwrap()
+                        {
+                            assert_eq!(statements.len(), 1);
+                            assert_eq!(format!("{}", statements.get(0).unwrap()), "(x + y)")
+                        } else {
+                            assert!(false, "Body not a block statement");
+                        }
+                    }
+                    _ => assert!(
+                        false,
+                        "Expecting FunctionLiteral, got {:?}",
+                        expression.get_expression_kind().unwrap()
+                    ),
                 }
-                _ => assert!(
-                    false,
-                    "Expecting FunctionLiteral, got {:?}",
-                    expression.kind
-                ),
-            },
+            }
             _ => assert!(false, "Encountered unexpected non-expression statement"),
         }
     }
@@ -1360,25 +1423,33 @@ mod tests {
             length
         );
         let statement = program.statements.get(0).unwrap();
-        match &statement.kind {
-            StatementKind::Expression(expression) => match &expression.kind {
-                ExpressionKind::FunctionLiteral { parameters, body } => {
-                    assert_eq!(
-                        parameters.len(),
-                        1,
-                        "Expecting one param, got {:?}",
-                        parameters
-                    );
-                    assert_eq!(parameters.get(0).unwrap().get_literal().unwrap(), "x");
-                    assert_eq!(body.get_statements().len(), 1);
-                    assert_eq!(format!("{}", body.get_statements().get(0).unwrap()), "x");
+        match statement.get_statement_kind().unwrap() {
+            StatementKind::Expression(expression) => {
+                match expression.get_expression_kind().unwrap() {
+                    ExpressionKind::FunctionLiteral { parameters, body } => {
+                        assert_eq!(
+                            parameters.len(),
+                            1,
+                            "Expecting one param, got {:?}",
+                            parameters
+                        );
+                        assert_eq!(parameters.get(0).unwrap().get_literal().unwrap(), "x");
+                        if let StatementKind::Block(statements) =
+                            *body.get_statement_kind().unwrap()
+                        {
+                            assert_eq!(statements.len(), 1);
+                            assert_eq!(format!("{}", statements.get(0).unwrap()), "x")
+                        } else {
+                            assert!(false, "Body not a block statement");
+                        }
+                    }
+                    _ => assert!(
+                        false,
+                        "Expecting FunctionLiteral, got {:?}",
+                        expression.get_expression_kind().unwrap()
+                    ),
                 }
-                _ => assert!(
-                    false,
-                    "Expecting FunctionLiteral, got {:?}",
-                    expression.kind
-                ),
-            },
+            }
             _ => assert!(false, "Encountered unexpected non-expression statement"),
         }
     }
@@ -1403,8 +1474,11 @@ mod tests {
             length
         );
         let statement = program.statements.get(0).unwrap();
-        match &statement.kind {
-            StatementKind::Expression(expression) => match &expression.kind {
+        match &statement.get_statement_kind().unwrap() {
+            StatementKind::Expression(expression) => match &expression
+                .get_expression_kind()
+                .unwrap()
+            {
                 ExpressionKind::FunctionLiteral { parameters, body } => {
                     assert_eq!(
                         parameters.len(),
@@ -1412,16 +1486,17 @@ mod tests {
                         "Expecting zero params, got {:?}",
                         parameters
                     );
-                    assert_eq!(body.get_statements().len(), 1);
-                    assert_eq!(
-                        format!("{}", body.get_statements().get(0).unwrap()),
-                        "(x + y)"
-                    );
+                    if let StatementKind::Block(statements) = *body.get_statement_kind().unwrap() {
+                        assert_eq!(statements.len(), 1);
+                        assert_eq!(format!("{}", statements.get(0).unwrap()), "(x + y)")
+                    } else {
+                        assert!(false, "Body not a block statement");
+                    }
                 }
                 _ => assert!(
                     false,
                     "Expecting FunctionLiteral, got {:?}",
-                    expression.kind
+                    expression.get_expression_kind().unwrap()
                 ),
             },
             _ => assert!(false, "Encountered unexpected non-expression statement"),
@@ -1438,7 +1513,7 @@ mod tests {
             parsed.is_err(),
             true,
             "Parser failed with errors \"{:?}\"",
-            parser.errors
+            &parser.errors
         );
         let program = parsed.unwrap();
         let length = program.statements.len();
@@ -1448,20 +1523,26 @@ mod tests {
             length
         );
         let statement = program.statements.get(0).unwrap();
-        match &statement.kind {
-            StatementKind::Expression(expression) => match &expression.kind {
-                ExpressionKind::CallExpression {
-                    function,
-                    arguments,
-                } => {
-                    check_is_identifier(function, "add");
-                    assert_eq!(arguments.len(), 3);
-                    check_is_int_literal(arguments.get(0).unwrap(), 1);
-                    check_infix_expression(arguments.get(1).unwrap(), "(2 * 3)");
-                    check_infix_expression(arguments.get(2).unwrap(), "(4 + 5)");
+        match statement.get_statement_kind().unwrap() {
+            StatementKind::Expression(expression) => {
+                match expression.get_expression_kind().unwrap() {
+                    ExpressionKind::CallExpression {
+                        function,
+                        arguments,
+                    } => {
+                        assert_eq!(function, &"add");
+                        assert_eq!(arguments.len(), 3);
+                        check_is_int_literal(arguments.get(0).unwrap(), 1);
+                        check_infix_expression(arguments.get(1).unwrap(), "(2 * 3)");
+                        check_infix_expression(arguments.get(2).unwrap(), "(4 + 5)");
+                    }
+                    _ => assert!(
+                        false,
+                        "Expecting CallExpression, got {:?}",
+                        expression.get_expression_kind().unwrap()
+                    ),
                 }
-                _ => assert!(false, "Expecting CallExpression, got {:?}", expression.kind),
-            },
+            }
             _ => assert!(false, "Encountered unexpected non-expression statement"),
         }
     }

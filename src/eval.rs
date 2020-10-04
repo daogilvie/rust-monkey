@@ -1,9 +1,7 @@
 use crate::lex::{Token, TokenType};
 use crate::object::*;
 use crate::parse;
-use crate::parse::ast::{
-    ExpressionKind, ExpressionNode, StatementBlock, StatementKind, StatementNode,
-};
+use crate::parse::ast::{ExpressionKind, NodeRef, StatementKind};
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
 
@@ -128,95 +126,95 @@ fn eval_infix_expression(operator: Token, left: Object, right: Object) -> Result
     }
 }
 
-fn eval_expression(expr: ExpressionNode, environment: &Environment) -> Result<EvalResult, String> {
-    match expr.kind {
-        ExpressionKind::IntegerLiteral(value) => Ok(EvalResult::with_object(Object::with_type(
-            ObjectType::Integer(value),
-        ))),
-        ExpressionKind::BooleanLiteral(value) => {
-            if value {
-                Ok(EvalResult::with_object(TRUE))
-            } else {
-                Ok(EvalResult::with_object(FALSE))
+fn eval_expression(expr: NodeRef, environment: &Environment) -> Result<EvalResult, String> {
+    if let Some(kind) = expr.get_expression_kind() {
+        match kind {
+            ExpressionKind::IntegerLiteral(value) => Ok(EvalResult::with_object(
+                Object::with_type(ObjectType::Integer(*value)),
+            )),
+            ExpressionKind::BooleanLiteral(value) => {
+                if *value {
+                    Ok(EvalResult::with_object(TRUE))
+                } else {
+                    Ok(EvalResult::with_object(FALSE))
+                }
             }
-        }
-        ExpressionKind::PrefixExpression { operator, right } => {
-            let eval_r = eval_expression(*right, environment)?;
-            Ok(EvalResult::with_object(eval_prefix_expression(
-                &operator,
-                eval_r.result,
-            )?))
-        }
-        ExpressionKind::InfixExpression {
-            left,
-            operator,
-            right,
-        } => {
-            let eval_l = eval_expression(*left, environment)?;
-            let eval_r = eval_expression(*right, environment)?;
-            Ok(EvalResult::with_object(eval_infix_expression(
+            ExpressionKind::PrefixExpression { operator, right } => {
+                let eval_r = eval_expression(*right, environment)?;
+                Ok(EvalResult::with_object(eval_prefix_expression(
+                    &operator,
+                    eval_r.result,
+                )?))
+            }
+            ExpressionKind::InfixExpression {
+                left,
                 operator,
-                eval_l.result,
-                eval_r.result,
-            )?))
+                right,
+            } => {
+                let eval_l = eval_expression(*left, environment)?;
+                let eval_r = eval_expression(*right, environment)?;
+                Ok(EvalResult::with_object(eval_infix_expression(
+                    *operator,
+                    eval_l.result,
+                    eval_r.result,
+                )?))
+            }
+            ExpressionKind::IfConditional {
+                condition,
+                consequence,
+                alternative,
+            } => {
+                let eval_c = eval_expression(*condition, environment)?;
+                if is_truthy(&eval_c.result) {
+                    eval_statement(*consequence, environment)
+                } else if let Some(alt) = alternative {
+                    eval_statement(*alt, environment)
+                } else {
+                    Ok(EvalResult::with_object(Object::with_type(ObjectType::Null)))
+                }
+            }
+            ExpressionKind::Identifier(name) => {
+                Ok(EvalResult::with_object(eval_identifier(*name, environment)?))
+            }
+            _ => Err(format!(
+                "Cannot eval '{:?}'",
+                expr.get_expression_kind().unwrap()
+            )),
         }
-        ExpressionKind::IfConditional {
-            condition,
-            consequence,
-            alternative,
-        } => {
-            let eval_c = eval_expression(*condition, environment)?;
-            if is_truthy(&eval_c.result) {
-                eval_statement_block(*consequence, environment)
-            } else if let Some(alt) = alternative {
-                eval_statement_block(*alt, environment)
-            } else {
-                Ok(EvalResult::with_object(Object::with_type(ObjectType::Null)))
+    } else {
+        Err(String::from("Attempted to eval statement as expression"))
+    }
+}
+
+fn eval_statement(statement: NodeRef, environment: &Environment) -> Result<EvalResult, String> {
+    if let Some(kind) = statement.get_statement_kind() {
+        match kind {
+            StatementKind::Expression(expression) => eval_expression(*expression, environment),
+            StatementKind::Return(value) => {
+                let mut r = eval_expression(*value, environment)?;
+                r.is_return = true;
+                Ok(r)
+            }
+            StatementKind::Let { name, value } => {
+                let v = eval_expression(*value, environment)?;
+                environment.upsert_ident(name.get_literal().unwrap(), v.result.clone());
+                Ok(EvalResult::with_object(v.result))
+            }
+            StatementKind::Block(statements) => {
+                let mut result;
+                for statement in statements {
+                    let inner_result = eval_statement(*statement, environment)?;
+                    let returning = inner_result.is_return;
+                    result = Ok(inner_result);
+                    if returning {
+                        break;
+                    }
+                }
+                result
             }
         }
-        ExpressionKind::Identifier(name) => {
-            Ok(EvalResult::with_object(eval_identifier(name, environment)?))
-        }
-        _ => Err(format!("Cannot eval '{:?}'", expr.kind)),
-    }
-}
-
-fn eval_statement_block(
-    mut block: StatementBlock,
-    environment: &Environment,
-) -> Result<EvalResult, String> {
-    let mut result: Result<EvalResult, String> = Ok(EvalResult::with_object_and_return(
-        Object::with_type(ObjectType::Null),
-        false,
-    ));
-
-    for statement in block.take_statements() {
-        let inner_result = eval_statement(statement, environment)?;
-        let returning = inner_result.is_return;
-        result = Ok(inner_result);
-        if returning {
-            break;
-        }
-    }
-    result
-}
-
-fn eval_statement(
-    statement: StatementNode,
-    environment: &Environment,
-) -> Result<EvalResult, String> {
-    match statement.kind {
-        StatementKind::Expression(expression) => eval_expression(expression, environment),
-        StatementKind::Return(value) => {
-            let mut r = eval_expression(value, environment)?;
-            r.is_return = true;
-            Ok(r)
-        }
-        StatementKind::Let { name, value } => {
-            let v = eval_expression(value, environment)?;
-            environment.upsert_ident(name.get_literal().unwrap(), v.result.clone());
-            Ok(EvalResult::with_object(v.result))
-        }
+    } else {
+        Err(String::from("Attempting to eval expression as statement"))
     }
 }
 
