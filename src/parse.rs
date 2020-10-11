@@ -1,41 +1,59 @@
+use std::fmt;
 use std::mem;
+use std::ops::Deref;
 
 use crate::lex;
 
 use crate::lex::TokenType::*;
 
-type Arena<'a> = Vec<Box<dyn ASTNode + 'a>>;
+#[derive(Debug)]
+pub struct NodeRef<'a> {
+    index: usize,
+    arena: &'a Arena<'a>,
+}
+
+impl<'a> Deref for NodeRef<'a> {
+    type Target = Box<dyn ASTNode + 'a>;
+
+    fn deref<'b>(&'b self) -> &'b Self::Target {
+        self.arena.get(self.index)
+    }
+}
+
+impl<'a> fmt::Display for NodeRef<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // Delegate to referenced ASTNode
+        self.deref().fmt(f)
+    }
+}
+
+#[derive(Debug)]
+struct Arena<'a> {
+    nodes: Vec<Box<dyn ASTNode + 'a>>,
+}
+
+impl<'a> Arena<'a> {
+    pub fn add_node(&'a mut self, node: Box<dyn ASTNode + 'a>) -> NodeRef<'a> {
+        self.nodes.push(node);
+        NodeRef {
+            index: self.nodes.len() - 1,
+            arena: &self,
+        }
+    }
+
+    pub fn get(&self, index: usize) -> &Box<dyn ASTNode + 'a> {
+        self.nodes.get(index).unwrap()
+    }
+}
 
 pub mod ast {
-    use super::{lex, Arena};
+    use super::{lex, Arena, NodeRef};
     use std::fmt;
-    use std::ops::Deref;
 
     pub trait ASTNode: fmt::Debug + fmt::Display {
         fn get_token_literal(&self) -> Option<&str>;
         fn get_expression_kind(&self) -> Option<&ExpressionKind>;
         fn get_statement_kind(&self) -> Option<&StatementKind>;
-    }
-
-    #[derive(Debug)]
-    pub struct NodeRef<'a> {
-        index: usize,
-        arena: &'a Arena<'a>,
-    }
-
-    impl<'a> Deref for NodeRef<'a> {
-        type Target = Box<dyn ASTNode + 'a>;
-
-        fn deref<'b>(&'b self) -> &'b Self::Target {
-            self.arena.get(self.index).unwrap()
-        }
-    }
-
-    impl<'a> fmt::Display for NodeRef<'a> {
-        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            // Delegate to referenced ASTNode
-            self.deref().fmt(f)
-        }
     }
 
     #[derive(Debug)]
@@ -200,7 +218,7 @@ pub mod ast {
     }
 
     impl<'a> Program<'a> {
-        pub fn new(statements: Vec<NodeRef<'a>>, arena: Vec<Box<dyn ASTNode + 'a>>) -> Self {
+        pub fn new(statements: Vec<NodeRef<'a>>, arena: Arena<'a>) -> Self {
             Self { statements, arena }
         }
     }
@@ -277,7 +295,6 @@ pub struct Parser<'a> {
     current_token: lex::Token<'a>,
     peek_token: Option<lex::Token<'a>>,
     errors: Vec<String>,
-    arena: Arena<'a>,
 }
 
 impl<'a> Parser<'a> {
@@ -290,19 +307,10 @@ impl<'a> Parser<'a> {
             current_token: first_token,
             peek_token: Some(second_token),
             errors: Vec::new(),
-            arena: Vec::new(),
         }
     }
 
-    pub fn add_node(&'a mut self, node: Box<dyn ASTNode + 'a>) -> NodeRef<'a> {
-        self.arena.push(node);
-        NodeRef {
-            index: self.arena.len() - 1,
-            arena: &self.arena,
-        }
-    }
-
-    pub fn advance_tokens(&'a mut self) -> lex::Token<'a> {
+    pub fn advance_tokens(&mut self) -> lex::Token<'a> {
         let next = self.lexer.next_token().expect("Unable to advance token");
         let mut peek_unwrapped: lex::Token = self.peek_token.take().unwrap();
         mem::swap(&mut peek_unwrapped, &mut self.current_token);
@@ -310,17 +318,17 @@ impl<'a> Parser<'a> {
         peek_unwrapped
     }
 
-    pub fn parse(&'a mut self) -> Result<Program<'a>, String> {
+    pub fn parse(&mut self, mut arena: Arena<'a>) -> Result<Vec<NodeRef<'a>>, String> {
         let mut statements = Vec::new();
         while !self.is_current_token_of_type(EOF) {
-            match self.parse_statement() {
+            match self.parse_statement(&mut arena) {
                 Ok(stmt) => statements.push(stmt),
                 Err(err) => self.errors.push(String::from(err)),
             }
             self.advance_tokens();
         }
         if self.errors.is_empty() {
-            Ok(Program::new(statements, mem::take(&mut self.arena)))
+            Ok(statements)
         } else {
             let err_count = self.errors.len();
             let mut plural = "s";
@@ -336,11 +344,11 @@ impl<'a> Parser<'a> {
         &self.errors
     }
 
-    fn parse_statement(&'a mut self) -> Result<NodeRef<'a>, String> {
+    fn parse_statement(&mut self, arena: &'a mut Arena<'a>) -> Result<NodeRef<'a>, String> {
         match self.current_token.token_type {
-            LET => self.parse_let_statement(),
-            RETURN => self.parse_return_statement(),
-            _ => self.attempt_parse_expression_statement(),
+            LET => self.parse_let_statement(arena),
+            RETURN => self.parse_return_statement(arena),
+            _ => self.attempt_parse_expression_statement(arena),
         }
     }
 
@@ -352,7 +360,7 @@ impl<'a> Parser<'a> {
     }
 
     fn advance_tokens_if_next_of_type(
-        &'a mut self,
+        &mut self,
         expected_type: lex::TokenType,
     ) -> Result<lex::Token<'a>, String> {
         if let Some(t) = &self.peek_token {
@@ -387,15 +395,15 @@ impl<'a> Parser<'a> {
         self.current_token.token_type == expected_type
     }
 
-    fn parse_let_statement(&'a mut self) -> Result<NodeRef<'a>, String> {
+    fn parse_let_statement(&mut self, arena: &'a mut Arena<'a>) -> Result<NodeRef<'a>, String> {
         let original_token = self.advance_tokens_if_next_of_type(IDENT)?;
         let ident_token = self.advance_tokens_if_next_of_type(ASSIGN)?;
         self.advance_tokens();
-        let value = self.parse_expression(OperatorPrecedence::LOWEST)?;
+        let value = self.parse_expression(OperatorPrecedence::LOWEST, arena)?;
         if self.is_next_token_of_type(SEMICOLON) {
             self.advance_tokens();
         }
-        Ok(self.add_node(Box::new(StatementNode {
+        Ok(arena.add_node(Box::new(StatementNode {
             token: original_token,
             kind: StatementKind::Let {
                 name: ident_token,
@@ -404,21 +412,24 @@ impl<'a> Parser<'a> {
         })))
     }
 
-    fn parse_return_statement(&'a mut self) -> Result<NodeRef<'a>, String> {
+    fn parse_return_statement(&mut self, arena: &'a mut Arena<'a>) -> Result<NodeRef<'a>, String> {
         let original_token = self.advance_tokens();
-        let value = self.parse_expression(OperatorPrecedence::LOWEST)?;
+        let value = self.parse_expression(OperatorPrecedence::LOWEST, arena)?;
         if self.is_next_token_of_type(SEMICOLON) {
             self.advance_tokens();
         }
-        Ok(self.add_node(Box::new(StatementNode {
+        Ok(arena.add_node(Box::new(StatementNode {
             token: original_token,
             kind: StatementKind::Return(value),
         })))
     }
 
-    fn attempt_parse_expression_statement(&'a mut self) -> Result<NodeRef<'a>, String> {
+    fn attempt_parse_expression_statement(
+        &mut self,
+        arena: &'a mut Arena<'a>,
+    ) -> Result<NodeRef<'a>, String> {
         let original_token = self.current_token.clone();
-        let result = self.parse_expression(OperatorPrecedence::LOWEST)?;
+        let result = self.parse_expression(OperatorPrecedence::LOWEST, arena)?;
 
         match &self.peek_token {
             Some(token) => {
@@ -429,15 +440,16 @@ impl<'a> Parser<'a> {
             None => {}
         }
 
-        Ok(self.add_node(Box::new(StatementNode {
+        Ok(arena.add_node(Box::new(StatementNode {
             token: original_token,
             kind: StatementKind::Expression(result),
         })))
     }
 
     fn parse_expression(
-        &'a mut self,
+        &mut self,
         precedence: OperatorPrecedence,
+        arena: &'a mut Arena<'a>,
     ) -> Result<NodeRef<'a>, String> {
         // This is the power-house of the Pratt-esque parsing
         // strategy that the book gets us to implement.
@@ -445,7 +457,7 @@ impl<'a> Parser<'a> {
         // if appropriate. If that succeeds, we see if this is just the LHS of
         // an infix expression, and we iterate over this procedure until we reach
         // the end of the expression.
-        let prefix = self.attempt_prefix_parse()?;
+        let prefix = self.attempt_prefix_parse(arena)?;
         match prefix {
             Some(expr) => {
                 let mut current_expr = expr;
@@ -454,7 +466,7 @@ impl<'a> Parser<'a> {
                     && self.can_parse_infix()
                 {
                     self.advance_tokens();
-                    current_expr = self.parse_infix_expression(current_expr)?;
+                    current_expr = self.parse_infix_expression(current_expr, arena)?;
                 }
                 Ok(current_expr)
             }
@@ -465,17 +477,20 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn attempt_prefix_parse(&'a mut self) -> Result<Option<NodeRef<'a>>, String> {
+    fn attempt_prefix_parse(
+        &mut self,
+        arena: &'a mut Arena<'a>,
+    ) -> Result<Option<NodeRef<'a>>, String> {
         let parse_attempt = match &self.current_token.token_type {
-            lex::TokenType::IDENT => self.parse_identifier()?,
-            lex::TokenType::INT => self.parse_integer_literal()?,
-            lex::TokenType::BANG => self.parse_prefix_expression()?,
-            lex::TokenType::MINUS => self.parse_prefix_expression()?,
-            lex::TokenType::TRUE => self.parse_boolean_literal()?,
-            lex::TokenType::FALSE => self.parse_boolean_literal()?,
-            lex::TokenType::LPAREN => self.parse_grouped_expression()?,
-            lex::TokenType::IF => self.parse_if_expression()?,
-            lex::TokenType::FUNCTION => self.parse_function_literal()?,
+            lex::TokenType::IDENT => self.parse_identifier(arena)?,
+            lex::TokenType::INT => self.parse_integer_literal(arena)?,
+            lex::TokenType::BANG => self.parse_prefix_expression(arena)?,
+            lex::TokenType::MINUS => self.parse_prefix_expression(arena)?,
+            lex::TokenType::TRUE => self.parse_boolean_literal(arena)?,
+            lex::TokenType::FALSE => self.parse_boolean_literal(arena)?,
+            lex::TokenType::LPAREN => self.parse_grouped_expression(arena)?,
+            lex::TokenType::IF => self.parse_if_expression(arena)?,
+            lex::TokenType::FUNCTION => self.parse_function_literal(arena)?,
             _ => return Ok(None),
         };
         Ok(Some(parse_attempt))
@@ -499,19 +514,19 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_identifier(&'a mut self) -> Result<NodeRef<'a>, String> {
-        Ok(self.add_node(Box::new(ExpressionNode {
+    fn parse_identifier(&mut self, arena: &'a mut Arena<'a>) -> Result<NodeRef<'a>, String> {
+        Ok(arena.add_node(Box::new(ExpressionNode {
             token: self.current_token.clone(),
             kind: ExpressionKind::Identifier(self.current_token),
         })))
     }
 
-    fn parse_integer_literal(&'a mut self) -> Result<NodeRef<'a>, String> {
+    fn parse_integer_literal(&mut self, arena: &'a mut Arena<'a>) -> Result<NodeRef<'a>, String> {
         let token = self.current_token.clone();
         let lit = token.get_literal().unwrap();
         let attempted_parse = lit.parse();
         match attempted_parse {
-            Ok(value) => Ok(self.add_node(Box::new(ExpressionNode {
+            Ok(value) => Ok(arena.add_node(Box::new(ExpressionNode {
                 token,
                 kind: ExpressionKind::IntegerLiteral(value),
             }))),
@@ -519,7 +534,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_boolean_literal(&'a mut self) -> Result<NodeRef<'a>, String> {
+    fn parse_boolean_literal(&mut self, arena: &'a mut Arena<'a>) -> Result<NodeRef<'a>, String> {
         let token = self.current_token.clone();
         let value = match &token.token_type {
             lex::TokenType::TRUE => true,
@@ -532,15 +547,18 @@ impl<'a> Parser<'a> {
             }
         };
 
-        Ok(self.add_node(Box::new(ExpressionNode {
+        Ok(arena.add_node(Box::new(ExpressionNode {
             token,
             kind: ExpressionKind::BooleanLiteral(value),
         })))
     }
 
-    fn parse_grouped_expression(&'a mut self) -> Result<NodeRef<'a>, String> {
+    fn parse_grouped_expression(
+        &mut self,
+        arena: &'a mut Arena<'a>,
+    ) -> Result<NodeRef<'a>, String> {
         self.advance_tokens();
-        let expr = self.parse_expression(OperatorPrecedence::LOWEST);
+        let expr = self.parse_expression(OperatorPrecedence::LOWEST, arena);
         if !self.is_next_token_of_type(lex::TokenType::RPAREN) {
             let s = match &self.peek_token {
                 Some(t) => t.get_literal().unwrap().as_ref(),
@@ -554,13 +572,13 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_if_expression(&'a mut self) -> Result<NodeRef<'a>, String> {
+    fn parse_if_expression(&mut self, arena: &'a mut Arena<'a>) -> Result<NodeRef<'a>, String> {
         if !self.is_next_token_of_type(lex::TokenType::LPAREN) {
             return Err(format!("Expecting LPAREN, got {:?}", self.peek_token));
         }
         let original_token = self.advance_tokens();
         self.advance_tokens();
-        let condition = self.parse_expression(OperatorPrecedence::LOWEST)?;
+        let condition = self.parse_expression(OperatorPrecedence::LOWEST, arena)?;
         if !self.is_next_token_of_type(lex::TokenType::RPAREN) {
             return Err(format!("Expecting RPAREN, got {:?}", self.peek_token));
         }
@@ -570,7 +588,7 @@ impl<'a> Parser<'a> {
         }
         self.advance_tokens();
 
-        let consequence = self.parse_block_statement()?;
+        let consequence = self.parse_block_statement(arena)?;
 
         if self.is_next_token_of_type(lex::TokenType::ELSE) {
             self.advance_tokens();
@@ -579,8 +597,8 @@ impl<'a> Parser<'a> {
             }
             self.advance_tokens();
 
-            let alternative = self.parse_block_statement()?;
-            Ok(self.add_node(Box::new(ExpressionNode {
+            let alternative = self.parse_block_statement(arena)?;
+            Ok(arena.add_node(Box::new(ExpressionNode {
                 token: original_token,
                 kind: ExpressionKind::IfConditional {
                     condition,
@@ -589,7 +607,7 @@ impl<'a> Parser<'a> {
                 },
             })))
         } else {
-            Ok(self.add_node(Box::new(ExpressionNode {
+            Ok(arena.add_node(Box::new(ExpressionNode {
                 token: original_token,
                 kind: ExpressionKind::IfConditional {
                     condition,
@@ -600,11 +618,11 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_prefix_expression(&'a mut self) -> Result<NodeRef<'a>, String> {
+    fn parse_prefix_expression(&mut self, arena: &'a mut Arena<'a>) -> Result<NodeRef<'a>, String> {
         let operator_token = self.advance_tokens();
 
-        let rhs = self.parse_expression(OperatorPrecedence::PREFIX)?;
-        Ok(self.add_node(Box::new(ExpressionNode {
+        let rhs = self.parse_expression(OperatorPrecedence::PREFIX, arena)?;
+        Ok(arena.add_node(Box::new(ExpressionNode {
             token: operator_token.clone(),
             kind: ExpressionKind::PrefixExpression {
                 operator: operator_token,
@@ -613,14 +631,18 @@ impl<'a> Parser<'a> {
         })))
     }
 
-    fn parse_infix_expression(&'a mut self, lhs: NodeRef<'a>) -> Result<NodeRef<'a>, String> {
+    fn parse_infix_expression(
+        &mut self,
+        lhs: NodeRef<'a>,
+        arena: &'a mut Arena<'a>,
+    ) -> Result<NodeRef<'a>, String> {
         let current_precedence = self.get_current_token_precedence();
         let expr_token = self.advance_tokens();
         match &expr_token.token_type {
-            lex::TokenType::LPAREN => Ok(self.parse_call_expression(expr_token, lhs)?),
+            lex::TokenType::LPAREN => Ok(self.parse_call_expression(expr_token, lhs, arena)?),
             _ => {
-                let rhs = self.parse_expression(current_precedence)?;
-                Ok(self.add_node(Box::new(ExpressionNode {
+                let rhs = self.parse_expression(current_precedence, arena)?;
+                Ok(arena.add_node(Box::new(ExpressionNode {
                     token: expr_token.clone(),
                     kind: ExpressionKind::InfixExpression {
                         left: lhs,
@@ -632,35 +654,38 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_block_statement(&'a mut self) -> Result<NodeRef<'a>, String> {
+    fn parse_block_statement(&mut self, arena: &'a mut Arena<'a>) -> Result<NodeRef<'a>, String> {
         let mut statements = Vec::new();
         let token = self.advance_tokens();
         while !self.is_current_token_of_type(lex::TokenType::RBRACE)
             && !self.is_current_token_of_type(lex::TokenType::EOF)
         {
-            let statement = self.parse_statement()?;
+            let statement = self.parse_statement(arena)?;
             statements.push(statement);
             self.advance_tokens();
         }
-        Ok(self.add_node(Box::new(StatementNode {
+        Ok(arena.add_node(Box::new(StatementNode {
             token,
             kind: StatementKind::Block(statements),
         })))
     }
 
-    fn parse_function_literal(&'a mut self) -> Result<NodeRef<'a>, String> {
+    fn parse_function_literal(&mut self, arena: &'a mut Arena<'a>) -> Result<NodeRef<'a>, String> {
         let original_token = self.advance_tokens_if_next_of_type(lex::TokenType::LPAREN)?;
-        let parameters = self.parse_function_parameters()?;
+        let parameters = self.parse_function_parameters(arena)?;
 
         self.advance_tokens_if_next_of_type(lex::TokenType::LBRACE)?;
-        let body = self.parse_block_statement()?;
-        Ok(self.add_node(Box::new(ExpressionNode {
+        let body = self.parse_block_statement(arena)?;
+        Ok(arena.add_node(Box::new(ExpressionNode {
             token: original_token,
             kind: ExpressionKind::FunctionLiteral { parameters, body },
         })))
     }
 
-    fn parse_function_parameters(&'a mut self) -> Result<Vec<lex::Token<'a>>, String> {
+    fn parse_function_parameters(
+        &mut self,
+        arena: &'a mut Arena<'a>,
+    ) -> Result<Vec<lex::Token<'a>>, String> {
         let mut params = Vec::new();
         if self.is_next_token_of_type(lex::TokenType::RPAREN) {
             self.advance_tokens();
@@ -676,13 +701,14 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_call_expression(
-        &'a mut self,
+        &mut self,
         original_token: lex::Token<'a>,
         function: NodeRef<'a>,
+        arena: &'a mut Arena<'a>,
     ) -> Result<NodeRef<'a>, String> {
-        let arguments = self.parse_call_arguments()?;
+        let arguments = self.parse_call_arguments(arena)?;
         let fn_name = function.get_token_literal().unwrap();
-        Ok(self.add_node(Box::new(ExpressionNode {
+        Ok(arena.add_node(Box::new(ExpressionNode {
             token: original_token.clone(),
             kind: ExpressionKind::CallExpression {
                 function: fn_name,
@@ -691,20 +717,31 @@ impl<'a> Parser<'a> {
         })))
     }
 
-    fn parse_call_arguments(&'a mut self) -> Result<Vec<NodeRef<'a>>, String> {
+    fn parse_call_arguments(
+        &mut self,
+        arena: &'a mut Arena<'a>,
+    ) -> Result<Vec<NodeRef<'a>>, String> {
         let mut params = Vec::new();
         if self.is_next_token_of_type(lex::TokenType::RPAREN) {
             self.advance_tokens();
         } else {
-            params.push(self.parse_expression(OperatorPrecedence::LOWEST)?);
+            params.push(self.parse_expression(OperatorPrecedence::LOWEST, arena)?);
             while self.is_next_token_of_type(lex::TokenType::COMMA) {
                 self.advance_tokens();
                 self.advance_tokens();
-                params.push(self.parse_expression(OperatorPrecedence::LOWEST)?);
+                params.push(self.parse_expression(OperatorPrecedence::LOWEST, arena)?);
             }
             self.advance_tokens_if_next_of_type(lex::TokenType::RPAREN)?;
         }
         Ok(params)
+    }
+}
+
+pub fn parse<'a>(parser: &'a mut Parser<'a>) -> Result<Program<'a>, String> {
+    let arena = Arena { nodes: Vec::new() };
+    match parser.parse(arena) {
+        Err(error) => Err(error),
+        Ok(statements) => Ok(Program { statements, arena }),
     }
 }
 
@@ -797,7 +834,7 @@ mod tests {
                     let (input, expected_ident, expected_value) = $value;
                     let lexer = lex::Lexer::for_str(input);
                     let mut parser = Parser::for_lexer(lexer);
-                    let parsed = parser.parse();
+                    let parsed = parse(&mut parser);
                     assert_ne!(
                         parsed.is_err(),
                         true,
@@ -844,7 +881,7 @@ mod tests {
         ";
         let lexer = lex::Lexer::for_str(input);
         let mut parser = Parser::for_lexer(lexer);
-        let parsed = parser.parse();
+        let parsed = parse(&mut parser);
         assert_ne!(
             parsed.is_err(),
             true,
@@ -881,7 +918,7 @@ mod tests {
         ";
         let lexer = lex::Lexer::for_str(input);
         let mut parser = Parser::for_lexer(lexer);
-        let parsed = parser.parse();
+        let parsed = parse(&mut parser);
         assert_eq!(parsed.is_err(), true);
         let err = parsed.err().unwrap();
         assert_eq!(err, "Parser failed with 4 errors");
@@ -913,7 +950,7 @@ mod tests {
                     let (input, expected_value) = $value;
                     let lexer = lex::Lexer::for_str(input);
                     let mut parser = Parser::for_lexer(lexer);
-                    let parsed = parser.parse();
+                    let parsed = parse(&mut parser);
                     assert_ne!(
                         parsed.is_err(),
                         true,
@@ -955,12 +992,10 @@ mod tests {
         ";
         let lexer = lex::Lexer::for_str(input);
         let mut parser = Parser::for_lexer(lexer);
-        let parsed = parser.parse();
+        let parsed = parse(&mut parser);
         assert_ne!(
             parsed.is_err(),
             true,
-            "Parser failed with error \"{}\"",
-            parsed.err().unwrap()
         );
         let program = parsed.unwrap();
         let length = program.statements.len();
@@ -990,7 +1025,7 @@ mod tests {
         let input = "foobar;";
         let lexer = lex::Lexer::for_str(input);
         let mut parser = Parser::for_lexer(lexer);
-        let parsed = parser.parse();
+        let parsed = parse(&mut parser);
         assert_ne!(
             parsed.is_err(),
             true,
@@ -1018,7 +1053,7 @@ mod tests {
         let input = "5;";
         let lexer = lex::Lexer::for_str(input);
         let mut parser = Parser::for_lexer(lexer);
-        let parsed = parser.parse();
+        let parsed = parse(&mut parser);
         assert_ne!(
             parsed.is_err(),
             true,
@@ -1051,7 +1086,7 @@ mod tests {
                     let (input, expected_operator, expected_value) = $value;
                     let lexer = lex::Lexer::for_str(input);
                     let mut parser = Parser::for_lexer(lexer);
-                    let parsed = parser.parse();
+                    let parsed = parse(&mut parser);
                     assert_ne!(
                         parsed.is_err(),
                         true,
@@ -1105,7 +1140,7 @@ mod tests {
                     let (input, expected_lhs, expected_operator, expected_rhs) = $value;
                     let lexer = lex::Lexer::for_str(input);
                     let mut parser = Parser::for_lexer(lexer);
-                    let parsed = parser.parse();
+                    let parsed = parse(&mut parser);
                     assert_ne!(
                         parsed.is_err(),
                         true,
@@ -1167,7 +1202,7 @@ mod tests {
                     let (input, expected_repr) = $value;
                     let lexer = lex::Lexer::for_str(input);
                     let mut parser = Parser::for_lexer(lexer);
-                    let parsed = parser.parse();
+                    let parsed = parse(&mut parser);
                     assert_ne!(
                         parsed.is_err(),
                         true,
@@ -1213,7 +1248,7 @@ mod tests {
         let input = "true; false;";
         let lexer = lex::Lexer::for_str(input);
         let mut parser = Parser::for_lexer(lexer);
-        let parsed = parser.parse();
+        let parsed = parse(&mut parser);
         assert_ne!(
             parsed.is_err(),
             true,
@@ -1248,7 +1283,7 @@ mod tests {
         let input = "if (x < y) { x }";
         let lexer = lex::Lexer::for_str(input);
         let mut parser = Parser::for_lexer(lexer);
-        let parsed = parser.parse();
+        let parsed = parse(&mut parser);
         assert_ne!(
             parsed.is_err(),
             true,
@@ -1298,7 +1333,7 @@ mod tests {
         let input = "if (x < y) { x } else { y }";
         let lexer = lex::Lexer::for_str(input);
         let mut parser = Parser::for_lexer(lexer);
-        let parsed = parser.parse();
+        let parsed = parse(&mut parser);
         assert_ne!(
             parsed.is_err(),
             true,
@@ -1356,7 +1391,7 @@ mod tests {
         let input = "fn(x, y) { x + y }";
         let lexer = lex::Lexer::for_str(input);
         let mut parser = Parser::for_lexer(lexer);
-        let parsed = parser.parse();
+        let parsed = parse(&mut parser);
         assert_ne!(
             parsed.is_err(),
             true,
@@ -1408,7 +1443,7 @@ mod tests {
         let input = "fn(x) { x }";
         let lexer = lex::Lexer::for_str(input);
         let mut parser = Parser::for_lexer(lexer);
-        let parsed = parser.parse();
+        let parsed = parse(&mut parser);
         assert_ne!(
             parsed.is_err(),
             true,
@@ -1459,7 +1494,7 @@ mod tests {
         let input = "fn() { x + y }";
         let lexer = lex::Lexer::for_str(input);
         let mut parser = Parser::for_lexer(lexer);
-        let parsed = parser.parse();
+        let parsed = parse(&mut parser);
         assert_ne!(
             parsed.is_err(),
             true,
@@ -1508,7 +1543,7 @@ mod tests {
         let input = "add(1, 2 * 3, 4 + 5);";
         let lexer = lex::Lexer::for_str(input);
         let mut parser = Parser::for_lexer(lexer);
-        let parsed = parser.parse();
+        let parsed = parse(&mut parser);
         assert_ne!(
             parsed.is_err(),
             true,

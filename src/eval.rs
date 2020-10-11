@@ -1,7 +1,7 @@
 use crate::lex::{Token, TokenType};
 use crate::object::*;
-use crate::parse;
-use crate::parse::ast::{ExpressionKind, NodeRef, StatementKind};
+use crate::parse::ast::{ExpressionKind, Program, StatementKind};
+use crate::parse::NodeRef;
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
 
@@ -173,9 +173,10 @@ fn eval_expression(expr: NodeRef, environment: &Environment) -> Result<EvalResul
                     Ok(EvalResult::with_object(Object::with_type(ObjectType::Null)))
                 }
             }
-            ExpressionKind::Identifier(name) => {
-                Ok(EvalResult::with_object(eval_identifier(*name, environment)?))
-            }
+            ExpressionKind::Identifier(name) => Ok(EvalResult::with_object(eval_identifier(
+                *name,
+                environment,
+            )?)),
             _ => Err(format!(
                 "Cannot eval '{:?}'",
                 expr.get_expression_kind().unwrap()
@@ -218,10 +219,7 @@ fn eval_statement(statement: NodeRef, environment: &Environment) -> Result<EvalR
     }
 }
 
-fn eval_program_with_env(
-    program: parse::ast::Program,
-    environment: &Environment,
-) -> Result<Object, String> {
+fn eval_program_with_env(program: Program, environment: &Environment) -> Result<Object, String> {
     let mut result = Ok(NULL);
     for statement in program.statements {
         let inner_result = eval_statement(statement, environment)?;
@@ -234,10 +232,7 @@ fn eval_program_with_env(
     result
 }
 
-pub fn eval_program(
-    program: parse::ast::Program,
-    environment: Option<&Environment>,
-) -> Result<Object, String> {
+pub fn eval_program(program: Program, environment: Option<&Environment>) -> Result<Object, String> {
     if let Some(e) = environment {
         eval_program_with_env(program, e)
     } else {
@@ -250,11 +245,12 @@ pub fn eval_program(
 mod tests {
     use super::*;
     use crate::lex;
+    use crate::parse::{parse, Parser};
 
     fn check_eval(input: &str) -> Result<Object, String> {
         let l = lex::Lexer::for_str(input);
-        let mut p = parse::Parser::for_lexer(l);
-        let prog = p.parse()?;
+        let mut p = Parser::for_lexer(l);
+        let prog = parse(&mut p)?;
         eval_program(prog, None)
     }
 

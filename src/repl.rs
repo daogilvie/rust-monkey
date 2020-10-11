@@ -22,7 +22,10 @@ pub fn start(preamble: String) -> io::Result<()> {
         }
         let lexer = lex::Lexer::for_str(&trimmed);
         let mut parser = parse::Parser::for_lexer(lexer);
-        let program = parser.parse();
+        let program;
+        {
+            program = parse::parse(&mut parser);
+        }
         match program {
             Ok(p) => match eval::eval_program(p, Some(&env)) {
                 Ok(r) => print!("{}", r),
